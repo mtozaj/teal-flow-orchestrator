@@ -49,6 +49,7 @@ export type Database = {
           completed_at: string | null
           created_at: string
           failure_count: number
+          file_path: string | null
           id: string
           label: string
           max_parallelism: number
@@ -62,6 +63,7 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           failure_count?: number
+          file_path?: string | null
           id?: string
           label: string
           max_parallelism?: number
@@ -75,6 +77,7 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           failure_count?: number
+          file_path?: string | null
           id?: string
           label?: string
           max_parallelism?: number
