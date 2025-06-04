@@ -13,7 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 
 const BatchDetails = () => {
   const { id } = useParams<{ id: string }>();
-  const [logs, setLogs] = useState<any[]>([]);
+  const [liveLogs, setLiveLogs] = useState<any[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const { data: batch, isLoading: batchLoading } = useQuery({
@@ -53,7 +53,7 @@ const BatchDetails = () => {
     enabled: !!id
   });
 
-  const { data: logs = [], isLoading: logsLoading } = useQuery({
+  const { data: batchLogs = [], isLoading: logsLoading } = useQuery({
     queryKey: ['batch-logs', id],
     queryFn: async () => {
       if (!id) throw new Error('No batch ID provided');
@@ -86,7 +86,7 @@ const BatchDetails = () => {
           filter: `batch_id=eq.${id}`,
         },
         (payload) => {
-          setLogs(prev => [...prev, payload.new]);
+          setLiveLogs(prev => [...prev, payload.new]);
         }
       )
       .subscribe();
@@ -100,7 +100,7 @@ const BatchDetails = () => {
         .order('timestamp', { ascending: true });
       
       if (data) {
-        setLogs(data);
+        setLiveLogs(data);
       }
     };
 
@@ -114,7 +114,7 @@ const BatchDetails = () => {
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  }, [liveLogs]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -259,13 +259,13 @@ const BatchDetails = () => {
               </CardHeader>
               <CardContent className="p-0">
                 <ScrollArea className="h-96 p-4">
-                  {logs.length === 0 ? (
+                  {liveLogs.length === 0 ? (
                     <div className="text-gray-500 text-center py-8">
                       No logs yet. Logs will appear here when processing starts.
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      {logs.map((log, index) => (
+                      {liveLogs.map((log, index) => (
                         <div key={index} className="text-sm">
                           <span className="text-gray-400">
                             [{new Date(log.timestamp).toLocaleTimeString()}]
