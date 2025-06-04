@@ -262,7 +262,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
 
       // Assign plan
       const planRequestId = await assignPlan(eid, plan.uuid, apiKey, apiSecret);
-      await supabase.table("esim_results").upsert({
+      await supabase.from("esim_results").upsert({
         batch_id: batchId,
         eid,
         [`${plan.name.toLowerCase()}_plan_request_id`]: planRequestId
@@ -289,7 +289,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
       const iccid = checkResult?.entries?.[0]?.iccid;
       
       if (planChangeStatus === 'SUCCESS') {
-        await supabase.table("esim_results").upsert({
+        await supabase.from("esim_results").upsert({
           batch_id: batchId,
           eid,
           [`${plan.name.toLowerCase()}_iccid`]: iccid,
@@ -312,7 +312,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     console.error(`Error processing ${eid}:`, error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     await logToBatch(supabase, batchId, 'ERROR', `Error processing ${eid}: ${errorMessage}`, eid);
-    await supabase.table("esim_results").upsert({
+    await supabase.from("esim_results").upsert({
       batch_id: batchId,
       eid,
       error_message: errorMessage
@@ -401,35 +401,33 @@ Deno.serve(async (req) => {
 
     console.log(`Found batch: ${batch.label} with ${batch.total_eids} EIDs`);
 
-    // Download CSV from storage if file_path exists
+    // Get EIDs from esim_results table instead of trying to download CSV
     let eids: string[] = [];
-    if (batch.file_path) {
-      try {
-        console.log(`Downloading CSV from: ${batch.file_path}`);
-        const { data: csvData, error: downloadError } = await supabaseClient.storage
-          .from('batch-uploads')
-          .download(batch.file_path);
-        
-        if (downloadError) {
-          console.error('Error downloading CSV:', downloadError);
-          return new Response(
-            JSON.stringify({ error: `Failed to download CSV: ${downloadError.message}` }),
-            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-        
-        if (csvData) {
-          const text = await csvData.text();
-          eids = text.split('\n').map(line => line.trim()).filter(line => line);
-          console.log(`Parsed ${eids.length} EIDs from CSV`);
-        }
-      } catch (error) {
-        console.error('Error processing CSV:', error);
+    try {
+      console.log('Getting EIDs from esim_results table...');
+      const { data: esimResults, error: esimError } = await supabaseClient
+        .from('esim_results')
+        .select('eid')
+        .eq('batch_id', batchId);
+      
+      if (esimError) {
+        console.error('Error fetching EIDs from esim_results:', esimError);
         return new Response(
-          JSON.stringify({ error: `Failed to process CSV: ${error instanceof Error ? error.message : 'Unknown error'}` }),
+          JSON.stringify({ error: `Failed to fetch EIDs: ${esimError.message}` }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+      
+      if (esimResults && esimResults.length > 0) {
+        eids = esimResults.map(result => result.eid);
+        console.log(`Found ${eids.length} EIDs from esim_results table`);
+      }
+    } catch (error) {
+      console.error('Error getting EIDs from esim_results:', error);
+      return new Response(
+        JSON.stringify({ error: `Failed to get EIDs: ${error instanceof Error ? error.message : 'Unknown error'}` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     if (eids.length === 0) {
