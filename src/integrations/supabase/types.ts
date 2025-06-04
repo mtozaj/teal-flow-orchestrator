@@ -9,7 +9,169 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      batch_logs: {
+        Row: {
+          batch_id: string
+          eid: string | null
+          id: string
+          level: Database["public"]["Enums"]["log_level"]
+          message: string
+          timestamp: string
+        }
+        Insert: {
+          batch_id: string
+          eid?: string | null
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message: string
+          timestamp?: string
+        }
+        Update: {
+          batch_id?: string
+          eid?: string | null
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message?: string
+          timestamp?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "batch_logs_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      batches: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          failure_count: number
+          id: string
+          label: string
+          max_parallelism: number
+          processed_eids: number
+          status: Database["public"]["Enums"]["batch_status"]
+          success_count: number
+          total_eids: number
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          failure_count?: number
+          id?: string
+          label: string
+          max_parallelism?: number
+          processed_eids?: number
+          status?: Database["public"]["Enums"]["batch_status"]
+          success_count?: number
+          total_eids?: number
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          failure_count?: number
+          id?: string
+          label?: string
+          max_parallelism?: number
+          processed_eids?: number
+          status?: Database["public"]["Enums"]["batch_status"]
+          success_count?: number
+          total_eids?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      esim_results: {
+        Row: {
+          activation_request_id: string | null
+          att_iccid: string | null
+          att_plan_request_id: string | null
+          att_status: string | null
+          att_timestamp: string | null
+          batch_id: string
+          created_at: string
+          eid: string
+          error_message: string | null
+          global_iccid: string | null
+          global_plan_request_id: string | null
+          global_status: string | null
+          global_timestamp: string | null
+          id: string
+          tmo_iccid: string | null
+          tmo_plan_request_id: string | null
+          tmo_status: string | null
+          tmo_timestamp: string | null
+          updated_at: string
+          verizon_iccid: string | null
+          verizon_plan_request_id: string | null
+          verizon_status: string | null
+          verizon_timestamp: string | null
+        }
+        Insert: {
+          activation_request_id?: string | null
+          att_iccid?: string | null
+          att_plan_request_id?: string | null
+          att_status?: string | null
+          att_timestamp?: string | null
+          batch_id: string
+          created_at?: string
+          eid: string
+          error_message?: string | null
+          global_iccid?: string | null
+          global_plan_request_id?: string | null
+          global_status?: string | null
+          global_timestamp?: string | null
+          id?: string
+          tmo_iccid?: string | null
+          tmo_plan_request_id?: string | null
+          tmo_status?: string | null
+          tmo_timestamp?: string | null
+          updated_at?: string
+          verizon_iccid?: string | null
+          verizon_plan_request_id?: string | null
+          verizon_status?: string | null
+          verizon_timestamp?: string | null
+        }
+        Update: {
+          activation_request_id?: string | null
+          att_iccid?: string | null
+          att_plan_request_id?: string | null
+          att_status?: string | null
+          att_timestamp?: string | null
+          batch_id?: string
+          created_at?: string
+          eid?: string
+          error_message?: string | null
+          global_iccid?: string | null
+          global_plan_request_id?: string | null
+          global_status?: string | null
+          global_timestamp?: string | null
+          id?: string
+          tmo_iccid?: string | null
+          tmo_plan_request_id?: string | null
+          tmo_status?: string | null
+          tmo_timestamp?: string | null
+          updated_at?: string
+          verizon_iccid?: string | null
+          verizon_plan_request_id?: string | null
+          verizon_status?: string | null
+          verizon_timestamp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "esim_results_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -18,7 +180,8 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      batch_status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
+      log_level: "DEBUG" | "INFO" | "WARNING" | "ERROR"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -133,6 +296,9 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      batch_status: ["PENDING", "RUNNING", "COMPLETED", "FAILED"],
+      log_level: ["DEBUG", "INFO", "WARNING", "ERROR"],
+    },
   },
 } as const
