@@ -7,18 +7,18 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Settings as SettingsIcon, Database, Bell, Shield, Save } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 
 const Settings = () => {
   const [apiSettings, setApiSettings] = useState({
-    tealApiUrl: 'https://api.teal.com',
-    attApiUrl: 'https://api.att.com',
-    tmoApiUrl: 'https://api.t-mobile.com',
-    verizonApiUrl: 'https://api.verizon.com',
-    globalApiUrl: 'https://api.global.com'
+    tealApiKey: '',
+    tealApiSecret: '',
+    tmoUuid: 'cda438862b284bcdaec82ee516eada14',
+    verizonUuid: '3c8fbbbc3ab442b8bc2f244c5180f9d1',
+    globalUuid: '493bdfc2eccb415ea63796187f830784',
+    attUuid: 'cd27b630772d4d8f915173488b7bfcf1'
   });
 
   const [processingSettings, setProcessingSettings] = useState({
@@ -45,6 +45,14 @@ const Settings = () => {
   const { toast } = useToast();
 
   const handleSaveApiSettings = () => {
+    // Save API settings to localStorage or environment
+    localStorage.setItem('tealApiKey', apiSettings.tealApiKey);
+    localStorage.setItem('tealApiSecret', apiSettings.tealApiSecret);
+    localStorage.setItem('tmoUuid', apiSettings.tmoUuid);
+    localStorage.setItem('verizonUuid', apiSettings.verizonUuid);
+    localStorage.setItem('globalUuid', apiSettings.globalUuid);
+    localStorage.setItem('attUuid', apiSettings.attUuid);
+    
     toast({
       title: "API settings saved",
       description: "Your API configuration has been updated successfully",
@@ -108,58 +116,77 @@ const Settings = () => {
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
                   <Database className="h-5 w-5" />
-                  <span>API Endpoints</span>
+                  <span>API Configuration</span>
                 </CardTitle>
                 <CardDescription>
-                  Configure the API endpoints for different carriers and services
+                  Configure API credentials and carrier-specific UUIDs
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="teal-api">Teal API URL</Label>
-                    <Input
-                      id="teal-api"
-                      value={apiSettings.tealApiUrl}
-                      onChange={(e) => setApiSettings(prev => ({ ...prev, tealApiUrl: e.target.value }))}
-                      placeholder="https://api.teal.com"
-                    />
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="teal-api-key">Teal API Key</Label>
+                      <Input
+                        id="teal-api-key"
+                        type="password"
+                        value={apiSettings.tealApiKey}
+                        onChange={(e) => setApiSettings(prev => ({ ...prev, tealApiKey: e.target.value }))}
+                        placeholder="Enter Teal API Key"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="teal-api-secret">Teal API Secret</Label>
+                      <Input
+                        id="teal-api-secret"
+                        type="password"
+                        value={apiSettings.tealApiSecret}
+                        onChange={(e) => setApiSettings(prev => ({ ...prev, tealApiSecret: e.target.value }))}
+                        placeholder="Enter Teal API Secret"
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="att-api">AT&T API URL</Label>
-                    <Input
-                      id="att-api"
-                      value={apiSettings.attApiUrl}
-                      onChange={(e) => setApiSettings(prev => ({ ...prev, attApiUrl: e.target.value }))}
-                      placeholder="https://api.att.com"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="tmo-api">T-Mobile API URL</Label>
-                    <Input
-                      id="tmo-api"
-                      value={apiSettings.tmoApiUrl}
-                      onChange={(e) => setApiSettings(prev => ({ ...prev, tmoApiUrl: e.target.value }))}
-                      placeholder="https://api.t-mobile.com"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="verizon-api">Verizon API URL</Label>
-                    <Input
-                      id="verizon-api"
-                      value={apiSettings.verizonApiUrl}
-                      onChange={(e) => setApiSettings(prev => ({ ...prev, verizonApiUrl: e.target.value }))}
-                      placeholder="https://api.verizon.com"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="global-api">Global API URL</Label>
-                    <Input
-                      id="global-api"
-                      value={apiSettings.globalApiUrl}
-                      onChange={(e) => setApiSettings(prev => ({ ...prev, globalApiUrl: e.target.value }))}
-                      placeholder="https://api.global.com"
-                    />
+                  
+                  <div className="border-t pt-4">
+                    <h3 className="text-lg font-medium mb-4">Carrier Plan UUIDs</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="tmo-uuid">T-Mobile UUID</Label>
+                        <Input
+                          id="tmo-uuid"
+                          value={apiSettings.tmoUuid}
+                          onChange={(e) => setApiSettings(prev => ({ ...prev, tmoUuid: e.target.value }))}
+                          placeholder="T-Mobile plan UUID"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="verizon-uuid">Verizon UUID</Label>
+                        <Input
+                          id="verizon-uuid"
+                          value={apiSettings.verizonUuid}
+                          onChange={(e) => setApiSettings(prev => ({ ...prev, verizonUuid: e.target.value }))}
+                          placeholder="Verizon plan UUID"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="global-uuid">Global UUID</Label>
+                        <Input
+                          id="global-uuid"
+                          value={apiSettings.globalUuid}
+                          onChange={(e) => setApiSettings(prev => ({ ...prev, globalUuid: e.target.value }))}
+                          placeholder="Global plan UUID"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="att-uuid">AT&T UUID</Label>
+                        <Input
+                          id="att-uuid"
+                          value={apiSettings.attUuid}
+                          onChange={(e) => setApiSettings(prev => ({ ...prev, attUuid: e.target.value }))}
+                          placeholder="AT&T plan UUID"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="flex justify-end">
