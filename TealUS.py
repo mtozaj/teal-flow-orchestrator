@@ -21,7 +21,7 @@ HEADERS = {
 CALLBACK_URL = 'https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod'
 
 # Supabase configuration
-SUPABASE_URL = "https://sciftjvjlpemhkvtokhi.supabase.co"
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 BATCH_ID = os.environ.get("BATCH_ID", "local")
 EID = os.environ.get("EID")
