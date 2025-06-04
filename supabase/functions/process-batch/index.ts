@@ -31,13 +31,19 @@ async function makeApiRequest(url: string, options: RequestInit, apiKey: string,
     ...options.headers
   };
 
+  console.log(`Making API request to: ${url}`);
+  
   const response = await fetch(url, {
     ...options,
     headers
   });
 
+  console.log(`API response status: ${response.status}`);
+
   if (!response.ok) {
-    throw new Error(`API call failed with status ${response.status}`);
+    const errorText = await response.text();
+    console.error(`API call failed: ${response.status} - ${errorText}`);
+    throw new Error(`API call failed with status ${response.status}: ${errorText}`);
   }
 
   return response.json();
@@ -142,19 +148,38 @@ async function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function logToBatch(supabase: any, batchId: string, level: string, message: string, eid?: string) {
+  try {
+    await supabase
+      .from('batch_logs')
+      .insert({
+        batch_id: batchId,
+        level,
+        message,
+        eid,
+        timestamp: new Date().toISOString()
+      });
+  } catch (error) {
+    console.error('Failed to log to batch_logs:', error);
+  }
+}
+
 async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecret: string, supabase: any, batchId: string) {
   console.log(`Starting processing for EID: ${eid}`);
+  await logToBatch(supabase, batchId, 'INFO', `Starting processing for EID: ${eid}`, eid);
   
   try {
     // Step 1: Activate eSIM
+    await logToBatch(supabase, batchId, 'INFO', `Initiating activation for ${eid}`, eid);
     const activationRequestId = await activateEsim(eid, apiKey, apiSecret);
-    await supabase.table("esim_results").upsert({
+    await supabase.from("esim_results").upsert({
       batch_id: batchId,
       eid,
       activation_request_id: activationRequestId
     });
 
     console.log(`Activation initiated for ${eid} with request ID: ${activationRequestId}`);
+    await logToBatch(supabase, batchId, 'INFO', `Activation initiated with request ID: ${activationRequestId}`, eid);
 
     // Wait and poll for activation result
     await sleep(30000); // 30 seconds
@@ -163,6 +188,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     const pollInterval = 10000; // 10 seconds
     let elapsed = 0;
 
+    await logToBatch(supabase, batchId, 'INFO', `Waiting for activation result...`, eid);
     while (elapsed < maxWaitTime) {
       activationResult = await getOperationResult(activationRequestId, apiKey, apiSecret);
       if (activationResult) break;
@@ -175,8 +201,10 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     }
 
     console.log(`Activation successful for ${eid}`);
+    await logToBatch(supabase, batchId, 'INFO', `Activation successful for ${eid}`, eid);
 
     // Step 2: Check if eSIM is active
+    await logToBatch(supabase, batchId, 'INFO', `Checking if eSIM is active...`, eid);
     let isActive = false;
     const maxRetries = 8;
     
@@ -193,6 +221,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
       
       if (attempt < maxRetries - 1) {
         console.log(`eSIM ${eid} not active yet, waiting 2 minutes...`);
+        await logToBatch(supabase, batchId, 'INFO', `eSIM not active yet, retrying in 2 minutes... (attempt ${attempt + 1}/${maxRetries})`, eid);
         await sleep(120000); // 2 minutes
       }
     }
@@ -202,6 +231,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     }
 
     console.log(`eSIM ${eid} is now active`);
+    await logToBatch(supabase, batchId, 'INFO', `eSIM ${eid} is now active`, eid);
 
     // Step 3: Assign plans
     const plans = [
@@ -213,6 +243,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
 
     for (const plan of plans) {
       console.log(`Assigning ${plan.name} plan to ${eid}`);
+      await logToBatch(supabase, batchId, 'INFO', `Assigning ${plan.name} plan to ${eid}`, eid);
       
       // Check device status before plan assignment
       const statusRequestId = generateRequestId();
@@ -224,6 +255,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
       
       if (deviceStatus !== 'ONLINE') {
         console.log(`Device ${eid} status is ${deviceStatus}, waiting for ONLINE status...`);
+        await logToBatch(supabase, batchId, 'WARN', `Device status is ${deviceStatus}, waiting for ONLINE status...`, eid);
         // Wait for device to come online (simplified for this implementation)
         await sleep(120000);
       }
@@ -244,6 +276,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
       }
 
       console.log(`Plan assignment API call successful for ${plan.name}`);
+      await logToBatch(supabase, batchId, 'INFO', `Plan assignment API call successful for ${plan.name}`, eid);
       await sleep(240000); // Wait 4 minutes
 
       // Check plan change status
@@ -264,6 +297,7 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
           [`${plan.name.toLowerCase()}_timestamp`]: new Date().toISOString()
         });
         console.log(`${plan.name} plan assigned successfully to ${eid}`);
+        await logToBatch(supabase, batchId, 'INFO', `${plan.name} plan assigned successfully`, eid);
       } else {
         throw new Error(`Plan change status was ${planChangeStatus} for ${plan.name}`);
       }
@@ -272,13 +306,16 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     // Mark as successful
     await supabase.rpc('increment_batch_success', { batch_id: batchId });
     console.log(`Successfully processed all plans for ${eid}`);
+    await logToBatch(supabase, batchId, 'INFO', `Successfully processed all plans for ${eid}`, eid);
 
   } catch (error) {
     console.error(`Error processing ${eid}:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await logToBatch(supabase, batchId, 'ERROR', `Error processing ${eid}: ${errorMessage}`, eid);
     await supabase.table("esim_results").upsert({
       batch_id: batchId,
       eid,
-      error_message: error instanceof Error ? error.message : String(error)
+      error_message: errorMessage
     });
     await supabase.rpc('increment_batch_failure', { batch_id: batchId });
   }
@@ -291,19 +328,53 @@ Deno.serve(async (req) => {
   }
 
   try {
+    console.log('Processing batch request...');
+    
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { batchId, apiKey, apiSecret, planUuids }: ProcessBatchRequest = await req.json();
-
-    if (!batchId || !apiKey || !apiSecret) {
+    let requestBody;
+    try {
+      requestBody = await req.json();
+      console.log('Request body received:', { ...requestBody, apiKey: '[REDACTED]', apiSecret: '[REDACTED]' });
+    } catch (error) {
+      console.error('Failed to parse request body:', error);
       return new Response(
-        JSON.stringify({ error: 'Missing required parameters' }),
+        JSON.stringify({ error: 'Invalid JSON in request body' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const { batchId, apiKey, apiSecret, planUuids }: ProcessBatchRequest = requestBody;
+
+    // Validate required parameters
+    if (!batchId) {
+      console.error('Missing batchId parameter');
+      return new Response(
+        JSON.stringify({ error: 'Missing batchId parameter' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!apiKey || !apiSecret) {
+      console.error('Missing API credentials');
+      return new Response(
+        JSON.stringify({ error: 'Missing API credentials. Please configure them in Settings first.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!planUuids || !planUuids.tmo || !planUuids.verizon || !planUuids.global || !planUuids.att) {
+      console.error('Missing plan UUIDs');
+      return new Response(
+        JSON.stringify({ error: 'Missing plan UUIDs' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`Processing batch ${batchId}`);
 
     // Get batch details and EIDs
     const { data: batch, error: batchError } = await supabaseClient
@@ -312,36 +383,64 @@ Deno.serve(async (req) => {
       .eq('id', batchId)
       .single();
 
-    if (batchError || !batch) {
+    if (batchError) {
+      console.error('Error fetching batch:', batchError);
+      return new Response(
+        JSON.stringify({ error: `Failed to fetch batch: ${batchError.message}` }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!batch) {
+      console.error('Batch not found');
       return new Response(
         JSON.stringify({ error: 'Batch not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    console.log(`Found batch: ${batch.label} with ${batch.total_eids} EIDs`);
+
     // Download CSV from storage if file_path exists
     let eids: string[] = [];
     if (batch.file_path) {
       try {
-        const { data: csvData } = await supabaseClient.storage
+        console.log(`Downloading CSV from: ${batch.file_path}`);
+        const { data: csvData, error: downloadError } = await supabaseClient.storage
           .from('batch-uploads')
           .download(batch.file_path);
+        
+        if (downloadError) {
+          console.error('Error downloading CSV:', downloadError);
+          return new Response(
+            JSON.stringify({ error: `Failed to download CSV: ${downloadError.message}` }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         
         if (csvData) {
           const text = await csvData.text();
           eids = text.split('\n').map(line => line.trim()).filter(line => line);
+          console.log(`Parsed ${eids.length} EIDs from CSV`);
         }
       } catch (error) {
-        console.error('Error downloading CSV:', error);
+        console.error('Error processing CSV:', error);
+        return new Response(
+          JSON.stringify({ error: `Failed to process CSV: ${error instanceof Error ? error.message : 'Unknown error'}` }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
     }
 
     if (eids.length === 0) {
+      console.error('No EIDs found in batch');
       return new Response(
         JSON.stringify({ error: 'No EIDs found in batch' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    console.log(`Starting processing of ${eids.length} EIDs`);
 
     // Update batch status to RUNNING
     await supabaseClient
@@ -349,7 +448,10 @@ Deno.serve(async (req) => {
       .update({ status: 'RUNNING', updated_at: new Date().toISOString() })
       .eq('id', batchId);
 
-    // Process EIDs (simplified - in production you'd want to limit concurrency)
+    // Log batch start
+    await logToBatch(supabaseClient, batchId, 'INFO', `Batch processing started with ${eids.length} EIDs`);
+
+    // Process EIDs (limit concurrency to prevent overwhelming the API)
     const processingPromises = eids.slice(0, Math.min(eids.length, 5)).map(eid => 
       processEsim(eid, planUuids, apiKey, apiSecret, supabaseClient, batchId)
     );
@@ -367,9 +469,11 @@ Deno.serve(async (req) => {
           })
           .eq('id', batchId);
         
+        await logToBatch(supabaseClient, batchId, 'INFO', `Batch ${batchId} processing completed successfully`);
         console.log(`Batch ${batchId} processing completed`);
       }).catch(async (error) => {
         console.error(`Batch ${batchId} processing failed:`, error);
+        await logToBatch(supabaseClient, batchId, 'ERROR', `Batch processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
         await supabaseClient
           .from('batches')
           .update({ 
@@ -380,15 +484,19 @@ Deno.serve(async (req) => {
       })
     );
 
+    console.log('Returning success response');
     return new Response(
-      JSON.stringify({ success: true, message: 'Batch processing started' }),
+      JSON.stringify({ success: true, message: 'Batch processing started successfully' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     console.error('Error in process-batch function:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
+      JSON.stringify({ 
+        error: 'Internal server error', 
+        details: error instanceof Error ? error.message : 'Unknown error' 
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
