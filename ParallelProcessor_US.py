@@ -4,6 +4,7 @@ import subprocess
 import csv
 import threading
 import sys
+from typing import Optional
 from supabase import create_client, Client
 
 # Lock to synchronize console output from multiple threads
@@ -12,6 +13,7 @@ print_lock = threading.Lock()
 SUPABASE_URL = "https://sciftjvjlpemhkvtokhi.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 BATCH_ID = os.environ.get("BATCH_ID", "local")
+CSV_BUCKET = os.environ.get("CSV_BUCKET", "batch-uploads")
 
 supabase: Client | None = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -70,32 +72,88 @@ def read_output(process, idx, eid):
         else:
             safe_print(f"[Worker #{idx + 1}: EID {eid} ERROR] ->", eid=eid, level="ERROR")
 
+def claim_next_batch() -> Optional[dict]:
+    """Atomically fetch the next PENDING batch and mark it RUNNING."""
+    if not supabase:
+        return None
+    try:
+        # Attempt RPC first if available
+        resp = supabase.rpc('claim_next_batch').execute()
+        if resp and resp.data:
+            return resp.data if isinstance(resp.data, dict) else resp.data[0]
+    except Exception as e:
+        safe_print(f"RPC claim_next_batch failed: {e}", level="ERROR")
+
+    try:
+        resp = (
+            supabase
+            .table('batches')
+            .update({'status': 'RUNNING', 'updated_at': 'now()'})
+            .eq('status', 'PENDING')
+            .order('created_at')
+            .limit(1)
+            .execute()
+        )
+        if resp and resp.data:
+            return resp.data[0]
+    except Exception as e:
+        safe_print(f"Failed to claim next batch: {e}", level="ERROR")
+    return None
+
+def download_batch_csv(batch_id: str) -> Optional[str]:
+    """Download the batch CSV from Supabase storage and return local path."""
+    if not supabase:
+        return None
+    try:
+        data = supabase.storage.from_(CSV_BUCKET).download(f"{batch_id}.csv")
+        local_path = os.path.join(os.getcwd(), f"{batch_id}.csv")
+        with open(local_path, 'wb') as f:
+            f.write(data)
+        return local_path
+    except Exception as e:
+        safe_print(f"Failed to download CSV for batch {batch_id}: {e}", level="ERROR")
+        return None
+
 def update_batch_status(batch_id: str, status: str):
     if supabase:
         try:
-            supabase.table("batches").update({
-                "status": status,
-                "updated_at": "now()"
-            }).eq("id", batch_id).execute()
+            updates = {"status": status, "updated_at": "now()"}
+            if status == "COMPLETED":
+                updates["completed_at"] = "now()"
+            supabase.table("batches").update(updates).eq("id", batch_id).execute()
         except Exception as e:
             print(f"Failed to update batch status: {e}")
 
 def main():
+    global BATCH_ID
+
+    # If no specific batch ID provided, try to claim the next one
+    if BATCH_ID == "local" and supabase:
+        batch = claim_next_batch()
+        if not batch:
+            safe_print("No pending batches found.")
+            return
+        BATCH_ID = batch.get("id")
+
     # Update batch status to RUNNING
     update_batch_status(BATCH_ID, "RUNNING")
-    
+
     # Get the directory where the script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Path to the CSV file (assuming it's in the same directory)
     eids_file = os.path.join(script_dir, 'eids_US.csv')
+    # If using Supabase, download the CSV for this batch
+    if supabase:
+        downloaded = download_batch_csv(BATCH_ID)
+        if downloaded:
+            eids_file = downloaded
 
     # Read EIDs from CSV
     eids = []
     with open(eids_file, 'r') as file:
         csv_reader = csv.reader(file)
         for row in csv_reader:
-            if row:  # Make sure it's not an empty row
+            if row:
                 eids.append(row[0].strip())
 
     # Path to TealUS.py (assuming it's in the same directory)
@@ -137,6 +195,11 @@ def main():
 
     # Update batch status to COMPLETED
     update_batch_status(BATCH_ID, "COMPLETED")
+    if supabase and eids_file != os.path.join(script_dir, 'eids_US.csv'):
+        try:
+            os.remove(eids_file)
+        except OSError:
+            pass
 
     # Print out the results
     safe_print("\nSummary of EID Processing:")
