@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Upload, FileText, ArrowLeft, CheckCircle, AlertCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 const NewBatch = () => {
   const [batchLabel, setBatchLabel] = useState('');
@@ -36,25 +37,65 @@ const NewBatch = () => {
     }
   }, [toast]);
 
+  const parseEidsFromInput = async (): Promise<string[]> => {
+    if (inputMethod === 'csv' && csvFile) {
+      const text = await csvFile.text();
+      return text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    } else if (inputMethod === 'manual') {
+      return manualEids.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    }
+    return [];
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUploading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const eids = await parseEidsFromInput();
       
+      if (eids.length === 0) {
+        throw new Error('No EIDs provided');
+      }
+
+      // Create batch in database
+      const { data: batch, error } = await supabase
+        .from('batches')
+        .insert({
+          label: batchLabel,
+          max_parallelism: parseInt(maxParallelism),
+          total_eids: eids.length,
+          status: 'PENDING'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Create eSIM result entries for each EID
+      const esimResults = eids.map(eid => ({
+        batch_id: batch.id,
+        eid: eid
+      }));
+
+      const { error: resultsError } = await supabase
+        .from('esim_results')
+        .insert(esimResults);
+
+      if (resultsError) throw resultsError;
+
       toast({
         title: "Batch created successfully",
-        description: `Processing ${inputMethod === 'csv' ? csvFile?.name : 'manual EIDs'} with ${maxParallelism} workers`,
+        description: `Created batch with ${eids.length} EIDs and ${maxParallelism} max workers`,
       });
       
       // Navigate to batch details
-      navigate('/batch/new-batch-id');
+      navigate(`/batch/${batch.id}`);
     } catch (error) {
+      console.error('Error creating batch:', error);
       toast({
         title: "Error creating batch",
-        description: "Please try again or contact support",
+        description: error instanceof Error ? error.message : "Please try again or contact support",
         variant: "destructive"
       });
     } finally {
@@ -64,7 +105,7 @@ const NewBatch = () => {
 
   const getEidCount = () => {
     if (inputMethod === 'csv' && csvFile) {
-      return '~1,250 EIDs'; // Simulated count
+      return 'Processing...'; // Would need to parse file to get exact count
     }
     if (inputMethod === 'manual') {
       const lines = manualEids.split('\n').filter(line => line.trim().length > 0);
@@ -248,7 +289,7 @@ const NewBatch = () => {
             </Link>
             <Button 
               type="submit" 
-              disabled={isUploading || (!csvFile && inputMethod === 'csv') || (!manualEids.trim() && inputMethod === 'manual')}
+              disabled={isUploading || (!csvFile && inputMethod === 'csv') || (!manualEids.trim() && inputMethod === 'manual') || !batchLabel.trim()}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
             >
               {isUploading ? (

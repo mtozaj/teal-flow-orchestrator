@@ -8,26 +8,56 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, Activity, Clock, CheckCircle, AlertCircle, Play, Settings, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { useQuery } from '@tanstack/react-query';
 
 const Dashboard = () => {
-  const [recentBatches, setRecentBatches] = useState<Array<any>>([]);
+  const { data: recentBatches = [], isLoading } = useQuery({
+    queryKey: ['batches'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('batches')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (error) throw error;
+      return data.map(batch => ({
+        ...batch,
+        progress: batch.total_eids > 0 ? Math.round((batch.processed_eids / batch.total_eids) * 100) : 0,
+        completed: batch.processed_eids,
+        total: batch.total_eids,
+        failed: batch.failure_count
+      }));
+    }
+  });
 
-  useEffect(() => {
-    supabase
-      .from('batches')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .then(({ data }) => {
-        if (data) {
-          setRecentBatches(data as any[]);
-        }
-      });
-  }, []);
+  const { data: stats } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: async () => {
+      const { data: batches } = await supabase
+        .from('batches')
+        .select('status, success_count, failure_count, processed_eids')
+        .execute();
+
+      const activeBatches = batches?.filter(b => b.status === 'RUNNING').length || 0;
+      const totalProcessed = batches?.reduce((sum, b) => sum + b.processed_eids, 0) || 0;
+      const totalSuccess = batches?.reduce((sum, b) => sum + b.success_count, 0) || 0;
+      const totalFailure = batches?.reduce((sum, b) => sum + b.failure_count, 0) || 0;
+      const successRate = totalProcessed > 0 ? ((totalSuccess / totalProcessed) * 100).toFixed(1) : '0.0';
+
+      return {
+        activeBatches,
+        successRate: `${successRate}%`,
+        totalProcessed: totalProcessed > 1000 ? `${(totalProcessed / 1000).toFixed(1)}k` : totalProcessed.toString(),
+        avgProcessing: '2.4s' // This would need to be calculated from actual timing data
+      };
+    }
+  });
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'RUNNING': return 'bg-blue-500';
-      case 'DONE': return 'bg-green-500';
+      case 'COMPLETED': return 'bg-green-500';
       case 'FAILED': return 'bg-red-500';
       case 'PENDING': return 'bg-yellow-500';
       default: return 'bg-gray-500';
@@ -37,7 +67,7 @@ const Dashboard = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'RUNNING': return <Activity className="h-4 w-4" />;
-      case 'DONE': return <CheckCircle className="h-4 w-4" />;
+      case 'COMPLETED': return <CheckCircle className="h-4 w-4" />;
       case 'FAILED': return <AlertCircle className="h-4 w-4" />;
       default: return <Clock className="h-4 w-4" />;
     }
@@ -85,7 +115,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Active Batches</p>
-                  <p className="text-3xl font-bold text-blue-600">3</p>
+                  <p className="text-3xl font-bold text-blue-600">{stats?.activeBatches || 0}</p>
                 </div>
                 <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
                   <Activity className="h-6 w-6 text-blue-600" />
@@ -99,7 +129,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Success Rate</p>
-                  <p className="text-3xl font-bold text-green-600">94.8%</p>
+                  <p className="text-3xl font-bold text-green-600">{stats?.successRate || '0%'}</p>
                 </div>
                 <div className="w-12 h-12 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
                   <CheckCircle className="h-6 w-6 text-green-600" />
@@ -113,7 +143,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Avg Processing</p>
-                  <p className="text-3xl font-bold text-purple-600">2.4s</p>
+                  <p className="text-3xl font-bold text-purple-600">{stats?.avgProcessing || '0s'}</p>
                 </div>
                 <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
                   <Clock className="h-6 w-6 text-purple-600" />
@@ -127,7 +157,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Processed</p>
-                  <p className="text-3xl font-bold text-orange-600">12.4k</p>
+                  <p className="text-3xl font-bold text-orange-600">{stats?.totalProcessed || '0'}</p>
                 </div>
                 <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/20 rounded-lg flex items-center justify-center">
                   <BarChart3 className="h-6 w-6 text-orange-600" />
@@ -158,45 +188,53 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {recentBatches.map((batch) => (
-                    <div key={batch.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-3 h-3 rounded-full ${getStatusColor(batch.status)}`}></div>
-                          <h4 className="font-semibold">{batch.label}</h4>
-                          <Badge variant="outline" className="text-xs">
-                            {getStatusIcon(batch.status)}
-                            <span className="ml-1">{batch.status}</span>
-                          </Badge>
+                {isLoading ? (
+                  <div className="text-center py-8">Loading batches...</div>
+                ) : recentBatches.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground">No batches found. Create your first batch to get started.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {recentBatches.map((batch) => (
+                      <div key={batch.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-3 h-3 rounded-full ${getStatusColor(batch.status)}`}></div>
+                            <h4 className="font-semibold">{batch.label}</h4>
+                            <Badge variant="outline" className="text-xs">
+                              {getStatusIcon(batch.status)}
+                              <span className="ml-1">{batch.status}</span>
+                            </Badge>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm text-muted-foreground">
+                              {new Date(batch.created_at).toLocaleTimeString()}
+                            </span>
+                            <Link to={`/batch/${batch.id}`}>
+                              <Button size="sm" variant="outline">
+                                <Play className="h-3 w-3 mr-1" />
+                                View
+                              </Button>
+                            </Link>
+                          </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm text-muted-foreground">
-                            {new Date(batch.created).toLocaleTimeString()}
-                          </span>
-                          <Link to={`/batch/${batch.id}`}>
-                            <Button size="sm" variant="outline">
-                              <Play className="h-3 w-3 mr-1" />
-                              View
-                            </Button>
-                          </Link>
+                        
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span>Progress: {batch.completed}/{batch.total}</span>
+                            <span>{batch.progress}%</span>
+                          </div>
+                          <Progress value={batch.progress} className="h-2" />
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>✅ {batch.success_count} completed</span>
+                            <span>❌ {batch.failed} failed</span>
+                          </div>
                         </div>
                       </div>
-                      
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>Progress: {batch.completed}/{batch.total}</span>
-                          <span>{batch.progress}%</span>
-                        </div>
-                        <Progress value={batch.progress} className="h-2" />
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>✅ {batch.completed} completed</span>
-                          <span>❌ {batch.failed} failed</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

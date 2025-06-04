@@ -1,3 +1,4 @@
+
 import os
 import subprocess
 import csv
@@ -8,7 +9,7 @@ from supabase import create_client, Client
 # Lock to synchronize console output from multiple threads
 print_lock = threading.Lock()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_URL = "https://sciftjvjlpemhkvtokhi.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 BATCH_ID = os.environ.get("BATCH_ID", "local")
 
@@ -18,20 +19,33 @@ if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
 
 def log(batch_id: str, eid: str, level: str, message: str) -> None:
     if supabase:
-        supabase.table("batch_logs").insert({
-            "batch_id": batch_id,
-            "eid": eid,
-            "level": level,
-            "message": message,
-        }).execute()
+        try:
+            supabase.table("batch_logs").insert({
+                "batch_id": batch_id,
+                "eid": eid,
+                "level": level,
+                "message": message,
+            }).execute()
+        except Exception as e:
+            print(f"Failed to log to Supabase: {e}")
 
 def push_result(batch_id: str, eid: str, status: str) -> None:
     if supabase:
-        supabase.table("esim_results").upsert({
-            "batch_id": batch_id,
-            "eid": eid,
-            "status": status,
-        }).execute()
+        try:
+            # Update batch status and counters
+            if status == 'PASS':
+                supabase.rpc('increment_batch_success', {'batch_id': batch_id}).execute()
+            else:
+                supabase.rpc('increment_batch_failure', {'batch_id': batch_id}).execute()
+            
+            # Insert/update esim result
+            supabase.table("esim_results").upsert({
+                "batch_id": batch_id,
+                "eid": eid,
+                "error_message": "Processing failed" if status == 'FAIL' else None,
+            }).execute()
+        except Exception as e:
+            print(f"Failed to push result to Supabase: {e}")
 
 def safe_print(message: str, eid: str = "", level: str = "INFO") -> None:
     """Thread-safe print helper that also logs to Supabase."""
@@ -56,7 +70,20 @@ def read_output(process, idx, eid):
         else:
             safe_print(f"[Worker #{idx + 1}: EID {eid} ERROR] ->", eid=eid, level="ERROR")
 
+def update_batch_status(batch_id: str, status: str):
+    if supabase:
+        try:
+            supabase.table("batches").update({
+                "status": status,
+                "updated_at": "now()"
+            }).eq("id", batch_id).execute()
+        except Exception as e:
+            print(f"Failed to update batch status: {e}")
+
 def main():
+    # Update batch status to RUNNING
+    update_batch_status(BATCH_ID, "RUNNING")
+    
     # Get the directory where the script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -84,7 +111,8 @@ def main():
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            cwd=script_dir  # Set the working directory
+            cwd=script_dir,
+            env={**os.environ, 'BATCH_ID': BATCH_ID, 'EID': eid}
         )
         # Pass the EID to the subprocess
         process.stdin.write(f"{eid}\n")
@@ -106,6 +134,9 @@ def main():
         status = 'PASS' if return_code == 0 else 'FAIL'
         results[eid] = status
         push_result(BATCH_ID, eid, status)
+
+    # Update batch status to COMPLETED
+    update_batch_status(BATCH_ID, "COMPLETED")
 
     # Print out the results
     safe_print("\nSummary of EID Processing:")

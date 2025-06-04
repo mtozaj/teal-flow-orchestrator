@@ -1,10 +1,11 @@
+
 import uuid
 import requests
 import time
 import datetime
 import sys
 import os
-import pandas as pd
+from supabase import create_client, Client
 
 API_KEY = "d78far6ZuKvKp6G6K9hXyu3KXfo6843XSx7jFWNC01nztJi2kxMti6jCncGNO533bTZhsTW5wWqnvlKCvfQnxrygmCGHWjRLi3eY"
 API_SECRET = "SJyHaTyIk6fIe43dLAkM5TlKPJsjoiOJwY86L3avIu4UZ0GEmoKHcuGYtoGh1wfLQAhpPPnTAyAeOZruZ9QYoJ3IWxFR2GQuh0t5"
@@ -19,6 +20,30 @@ HEADERS = {
 # Callback URL
 CALLBACK_URL = 'https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod'
 
+# Supabase configuration
+SUPABASE_URL = "https://sciftjvjlpemhkvtokhi.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+BATCH_ID = os.environ.get("BATCH_ID", "local")
+EID = os.environ.get("EID")
+
+supabase: Client | None = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+def update_esim_result(eid: str, updates: dict):
+    """Update eSIM result in Supabase"""
+    if supabase:
+        try:
+            supabase.table("esim_results").upsert({
+                "batch_id": BATCH_ID,
+                "eid": eid,
+                **updates
+            }).execute()
+        except Exception as e:
+            print(f"Failed to update eSIM result: {e}")
+
+# ... keep existing code (API functions like already_active, generate_request_id, etc.)
+
 def already_active(eid: str, plan_uuid: str) -> bool:
     """
     True  ➜  SIM already has this plan *active* – we can skip.
@@ -30,7 +55,7 @@ def already_active(eid: str, plan_uuid: str) -> bool:
     time.sleep(30)
     info = get_operation_result(rid)
     if not info or not info.get("entries"):
-        return False                       # can’t prove it’s active – don’t skip
+        return False                       # can't prove it's active – don't skip
 
     cp_entries = info["entries"][0].get("connectionProfileEntries", [])
     return any(
@@ -173,8 +198,8 @@ def check_device_status(eid):
         print("Device status is ONLINE.")
 
 def main():
-    # Get EID from user input
-    eid = input("").strip()
+    # Get EID from environment or user input
+    eid = EID or input("").strip()
 
     if not eid:
         print("Error: EID must be provided.")
@@ -188,24 +213,10 @@ def main():
         {'name': 'ATT', 'uuid': 'cd27b630772d4d8f915173488b7bfcf1'}
     ]
 
-    # Initialize results dictionary with all expected keys
-    results = {
-        'EID': eid,
-        'Activation Request ID': None,
-        'Error': None,
-    }
-
-    for plan in plans:
-        plan_name = plan['name']
-        results[f"{plan_name} ICCID"] = None
-        results[f"{plan_name} Status"] = None
-        results[f"{plan_name} Timestamp"] = None
-        results[f"{plan_name} Plan Request ID"] = None
-
     try:
         # Activate eSIM
         request_id = activate_esim(eid)
-        results['Activation Request ID'] = request_id
+        update_esim_result(eid, {"activation_request_id": request_id})
         print(f"Activation initiated with request ID: {request_id}")
 
         # Poll for activation result
@@ -225,20 +236,9 @@ def main():
             elapsed_time += poll_interval
 
         if not activation_result or not activation_result.get('success'):
-            # --------------------------------------------------------------------------
-            #---------------------------------------------------------------------------
-            # EXIT HERE RECORD FAILURE IN THE EXCEL FILE OUTPUT WITH EID, WHERE/WHY IT FAILED, and REQUEST ID
             print("Activation failed or timed out.")
-            # Record failure in the output
-            results['Error'] = "Activation failed or timed out."
-            # Write to CSV and exit
-            output_file = 'teal_output_US.csv'
-            file_exists = os.path.isfile(output_file)
-            df = pd.DataFrame([results])
-            df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+            update_esim_result(eid, {"error_message": "Activation failed or timed out."})
             sys.exit(1)
-            # --------------------------------------------------------------------------
-            # --------------------------------------------------------------------------
         else:
             print("Activation request successful.")
 
@@ -303,35 +303,34 @@ def main():
             print()
             print("eSIM is active.")
 
-        # ---------------------PLAN ASSIGNMENT BELOW---------------------
-
         # Now assign each plan in the list
         for plan in plans:
             plan_name = plan['name']
             plan_uuid = plan['uuid']
 
-            # --- NEW : skip if this profile is already active -------------
+            # Check if this profile is already active
             if already_active(eid, plan_uuid):
                 print(f"{eid}: plan '{plan_name}' already SUCCESS – skipping")
-                results[f"{plan_name} ICCID"] = "Already active"
-                results[f"{plan_name} Status"] = "SUCCESS"
-                results[f"{plan_name} Timestamp"] = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-                continue  # jump to next plan
-            # ---------------------------------------------------------------
+                update_esim_result(eid, {
+                    f"{plan_name.lower()}_iccid": "Already active",
+                    f"{plan_name.lower()}_status": "SUCCESS",
+                    f"{plan_name.lower()}_timestamp": datetime.datetime.now().isoformat()
+                })
+                continue
 
             # Check that the device is ONLINE before each plan assignment
             check_device_status(eid)
 
             max_plan_attempts = 4
             plan_assignment_successful = False
-            # Outer loop for plan assignment retry
+            
             for plan_attempt in range(1, max_plan_attempts + 1):
                 print()
                 print(f"Plan assignment attempt {plan_attempt} for plan '{plan_name}'")
 
                 # Initiate plan assignment
                 assign_plan_request_id = assign_plan(eid, plan_uuid)
-                results[f"{plan_name} Plan Request ID"] = assign_plan_request_id
+                update_esim_result(eid, {f"{plan_name.lower()}_plan_request_id": assign_plan_request_id})
                 print(f"Plan assignment initiated with request ID: {assign_plan_request_id}")
 
                 print("Waiting for 30 seconds after plan assignment API call...")
@@ -340,7 +339,7 @@ def main():
                 plan_result = get_operation_result(assign_plan_request_id)
                 if not plan_result or not plan_result.get('success'):
                     print("Plan assignment API call did not return success; retrying the assignment...")
-                    continue  # Retry the assignment
+                    continue
 
                 print("Plan assignment API call returned success.")
                 print("Waiting for 4 minutes before checking plan change status...")
@@ -363,32 +362,23 @@ def main():
                 plan_change_status = esim_entry.get('planChangeStatus')
                 print(f"Initial planChangeStatus for '{plan_name}': {plan_change_status}")
 
-                # If the status is clearly SUCCESS, we are done.
                 if plan_change_status == "SUCCESS":
                     print("Plan change status is SUCCESS.")
                     plan_assignment_successful = True
                     break
-
-                # If it's FAILURE, then this attempt failed.
                 elif plan_change_status == "FAILURE":
                     print("Plan change status returned FAILURE.")
-                    # If we're on the last attempt, exit.
                     if plan_attempt == max_plan_attempts:
-                        results['Error'] = f"Plan change FAILURE for plan '{plan_name}' after {plan_attempt} attempts."
-                        results[f"{plan_name} ICCID"] = 'N/A'
-                        results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
-                        results[f"{plan_name} Timestamp"] = 'N/A'
-                        output_file = 'teal_output_US.csv'
-                        file_exists = os.path.isfile(output_file)
-                        df = pd.DataFrame([results])
-                        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+                        update_esim_result(eid, {
+                            "error_message": f"Plan change FAILURE for plan '{plan_name}' after {plan_attempt} attempts.",
+                            f"{plan_name.lower()}_iccid": 'N/A',
+                            f"{plan_name.lower()}_status": 'Plan change failed or timed out.',
+                            f"{plan_name.lower()}_timestamp": 'N/A'
+                        })
                         sys.exit(1)
                     else:
                         print("Retrying plan assignment due to FAILURE status...")
-                        continue  # Retry outer loop
-
-                # Otherwise, if the status is neither SUCCESS nor FAILURE,
-                # enter a nested loop to recheck the status.
+                        continue
                 else:
                     print(f"PlanChangeStatus is '{plan_change_status}'. Starting nested re-check loop...")
 
@@ -422,73 +412,49 @@ def main():
                             break
                         elif plan_change_status == "FAILURE":
                             print("Plan change status returned FAILURE during nested check.")
-                            break  # Exit nested loop; will retry the outer loop
+                            break
                         else:
                             print("Plan change status still indeterminate.")
                     if nested_success:
-                        break  # Break out of the outer loop since assignment succeeded
+                        break
                     else:
                         print("Nested check did not achieve SUCCESS; retrying plan assignment...")
-                        continue  # Retry the outer loop
+                        continue
 
-            # If after all outer attempts the assignment is still not successful, exit with an error.
             if not plan_assignment_successful:
-                results['Error'] = f"Plan change failed or timed out for plan '{plan_name}' after {max_plan_attempts} attempts."
-                results[f"{plan_name} ICCID"] = 'N/A'
-                results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
-                results[f"{plan_name} Timestamp"] = 'N/A'
-                output_file = 'teal_output_US.csv'
-                file_exists = os.path.isfile(output_file)
-                df = pd.DataFrame([results])
-                df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+                update_esim_result(eid, {
+                    "error_message": f"Plan change failed or timed out for plan '{plan_name}' after {max_plan_attempts} attempts.",
+                    f"{plan_name.lower()}_iccid": 'N/A',
+                    f"{plan_name.lower()}_status": 'Plan change failed or timed out.',
+                    f"{plan_name.lower()}_timestamp": 'N/A'
+                })
                 sys.exit(1)
 
-            # Upon a successful assignment, store the resulting data.
+            # Store successful results
             ICCID = esim_entry.get('iccid')
             Status = plan_change_status
             last_connected_network = esim_entry.get('lastConnectedNetwork', {})
             Timestamp = last_connected_network.get('lastCdrNetworkConsumptionTime')
             if not Timestamp:
-                Timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-            results[f"{plan_name} ICCID"] = ICCID
-            results[f"{plan_name} Status"] = Status
-            results[f"{plan_name} Timestamp"] = Timestamp
+                Timestamp = datetime.datetime.now().isoformat()
+            
+            update_esim_result(eid, {
+                f"{plan_name.lower()}_iccid": ICCID,
+                f"{plan_name.lower()}_status": Status,
+                f"{plan_name.lower()}_timestamp": Timestamp
+            })
 
             print(f"Plan '{plan_name}' assigned successfully:")
             print(f"ICCID: {ICCID}")
             print(f"Status: {Status}")
             print(f"Timestamp: {Timestamp}")
 
-        # Finish
         print()
         print("All plans assigned successfully.")
 
-        # Prepare DataFrame with data in a single row
-        df = pd.DataFrame([results])
-
-        pd.set_option('display.max_columns', None)  # Display all columns
-
-        print(df.to_string(index=False))
-
-        output_file = 'teal_output_US.csv'
-
-        # Check if the file exists to decide if headers are needed
-        file_exists = os.path.isfile(output_file)
-
-        # Write or append to the CSV file
-        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
-
     except Exception as e:
         print(f"Error: {e}")
-
-        # Record the error in results
-        results['Error'] = str(e)
-
-        # Write to CSV
-        output_file = 'teal_output_US.csv'
-        file_exists = os.path.isfile(output_file)
-        df = pd.DataFrame([results])
-        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+        update_esim_result(eid, {"error_message": str(e)})
         sys.exit(1)
 
 if __name__ == '__main__':
