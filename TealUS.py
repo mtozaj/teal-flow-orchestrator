@@ -7,8 +7,8 @@ import sys
 import os
 from supabase import create_client, Client
 
-API_KEY = "d78far6ZuKvKp6G6K9hXyu3KXfo6843XSx7jFWNC01nztJi2kxMti6jCncGNO533bTZhsTW5wWqnvlKCvfQnxrygmCGHWjRLi3eY"
-API_SECRET = "SJyHaTyIk6fIe43dLAkM5TlKPJsjoiOJwY86L3avIu4UZ0GEmoKHcuGYtoGh1wfLQAhpPPnTAyAeOZruZ9QYoJ3IWxFR2GQuh0t5"
+API_KEY = os.environ.get("TEAL_API_KEY")
+API_SECRET = os.environ.get("TEAL_API_SECRET")
 
 BASE_URL = 'https://integrationapi.teal.global/api/v1'
 HEADERS = {
