@@ -36,30 +36,46 @@ const BatchDetails = () => {
     enabled: !!id
   });
 
-  // Mutation to start batch processing
+  // Mutation to start batch processing with API keys
   const startBatchMutation = useMutation({
     mutationFn: async () => {
       if (!id) throw new Error('No batch ID provided');
       
-      const { data, error } = await supabase
-        .from('batches')
-        .update({ 
-          status: 'RUNNING',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id)
-        .select()
-        .single();
-      
+      // Get API keys from localStorage
+      const apiKey = localStorage.getItem('tealApiKey');
+      const apiSecret = localStorage.getItem('tealApiSecret');
+      const tmoUuid = localStorage.getItem('tmoUuid') || 'cda438862b284bcdaec82ee516eada14';
+      const verizonUuid = localStorage.getItem('verizonUuid') || '3c8fbbbc3ab442b8bc2f244c5180f9d1';
+      const globalUuid = localStorage.getItem('globalUuid') || '493bdfc2eccb415ea63796187f830784';
+      const attUuid = localStorage.getItem('attUuid') || 'cd27b630772d4d8f915173488b7bfcf1';
+
+      if (!apiKey || !apiSecret) {
+        throw new Error('API keys not found. Please configure them in Settings first.');
+      }
+
+      // Call the edge function
+      const { data, error } = await supabase.functions.invoke('process-batch', {
+        body: {
+          batchId: id,
+          apiKey,
+          apiSecret,
+          planUuids: {
+            tmo: tmoUuid,
+            verizon: verizonUuid,
+            global: globalUuid,
+            att: attUuid
+          }
+        }
+      });
+
       if (error) throw error;
       return data;
     },
     onSuccess: () => {
       toast({
-        title: "Batch Started",
-        description: "The batch processing has been initiated successfully.",
+        title: "Batch Processing Started",
+        description: "The batch processing has been initiated successfully using your API credentials.",
       });
-      // Invalidate and refetch batch data
       queryClient.invalidateQueries({ queryKey: ['batch', id] });
     },
     onError: (error) => {
