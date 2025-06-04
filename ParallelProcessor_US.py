@@ -3,30 +3,58 @@ import subprocess
 import csv
 import threading
 import sys
+from supabase import create_client, Client
 
 # Lock to synchronize console output from multiple threads
 print_lock = threading.Lock()
 
-def safe_print(message: str) -> None:
-    """Thread-safe print helper."""
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+BATCH_ID = os.environ.get("BATCH_ID", "local")
+
+supabase: Client | None = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+def log(batch_id: str, eid: str, level: str, message: str) -> None:
+    if supabase:
+        supabase.table("batch_logs").insert({
+            "batch_id": batch_id,
+            "eid": eid,
+            "level": level,
+            "message": message,
+        }).execute()
+
+def push_result(batch_id: str, eid: str, status: str) -> None:
+    if supabase:
+        supabase.table("esim_results").upsert({
+            "batch_id": batch_id,
+            "eid": eid,
+            "status": status,
+        }).execute()
+
+def safe_print(message: str, eid: str = "", level: str = "INFO") -> None:
+    """Thread-safe print helper that also logs to Supabase."""
     with print_lock:
         print(message, flush=True)
+    if supabase:
+        log(BATCH_ID, eid, level, message)
 
 def read_output(process, idx, eid):
     # Read stdout
     for line in process.stdout:
         text = line.rstrip()
         if text:
-            safe_print(f"[Worker #{idx + 1}: EID {eid}] -> {text}")
+            safe_print(f"[Worker #{idx + 1}: EID {eid}] -> {text}", eid=eid)
         else:
-            safe_print(f"[Worker #{idx + 1}: EID {eid}] ->")
+            safe_print(f"[Worker #{idx + 1}: EID {eid}] ->", eid=eid)
     # Read stderr
     for line in process.stderr:
         text = line.rstrip()
         if text:
-            safe_print(f"[Worker #{idx + 1}: EID {eid} ERROR] -> {text}")
+            safe_print(f"[Worker #{idx + 1}: EID {eid} ERROR] -> {text}", eid=eid, level="ERROR")
         else:
-            safe_print(f"[Worker #{idx + 1}: EID {eid} ERROR] ->")
+            safe_print(f"[Worker #{idx + 1}: EID {eid} ERROR] ->", eid=eid, level="ERROR")
 
 def main():
     # Get the directory where the script is located
@@ -77,11 +105,12 @@ def main():
         t.join()
         status = 'PASS' if return_code == 0 else 'FAIL'
         results[eid] = status
+        push_result(BATCH_ID, eid, status)
 
     # Print out the results
-    print("\nSummary of EID Processing:")
+    safe_print("\nSummary of EID Processing:")
     for eid, status in results.items():
-        print(f"{eid}: {status}")
+        safe_print(f"{eid}: {status}", eid=eid)
 
 if __name__ == '__main__':
     main()
