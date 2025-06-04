@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,8 +20,27 @@ const Settings = () => {
 
   const { toast } = useToast();
 
+  // Load saved settings from localStorage when component mounts
+  useEffect(() => {
+    const savedTealApiKey = localStorage.getItem('tealApiKey') || '';
+    const savedTealApiSecret = localStorage.getItem('tealApiSecret') || '';
+    const savedTmoUuid = localStorage.getItem('tmoUuid') || 'cda438862b284bcdaec82ee516eada14';
+    const savedVerizonUuid = localStorage.getItem('verizonUuid') || '3c8fbbbc3ab442b8bc2f244c5180f9d1';
+    const savedGlobalUuid = localStorage.getItem('globalUuid') || '493bdfc2eccb415ea63796187f830784';
+    const savedAttUuid = localStorage.getItem('attUuid') || 'cd27b630772d4d8f915173488b7bfcf1';
+
+    setApiSettings({
+      tealApiKey: savedTealApiKey,
+      tealApiSecret: savedTealApiSecret,
+      tmoUuid: savedTmoUuid,
+      verizonUuid: savedVerizonUuid,
+      globalUuid: savedGlobalUuid,
+      attUuid: savedAttUuid
+    });
+  }, []);
+
   const handleSaveApiSettings = () => {
-    // Save API settings to localStorage or environment
+    // Save API settings to localStorage
     localStorage.setItem('tealApiKey', apiSettings.tealApiKey);
     localStorage.setItem('tealApiSecret', apiSettings.tealApiSecret);
     localStorage.setItem('tmoUuid', apiSettings.tmoUuid);
