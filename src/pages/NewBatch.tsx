@@ -53,10 +53,26 @@ const NewBatch = () => {
 
     try {
       const eids = await parseEidsFromInput();
-      
+
       if (eids.length === 0) {
         throw new Error('No EIDs provided');
       }
+
+      const fileName = `${crypto.randomUUID()}.csv`;
+      let uploadError;
+
+      if (inputMethod === 'csv' && csvFile) {
+        ({ error: uploadError } = await supabase.storage
+          .from('batch-inputs')
+          .upload(fileName, csvFile));
+      } else {
+        const blob = new Blob([eids.join('\n')], { type: 'text/csv' });
+        ({ error: uploadError } = await supabase.storage
+          .from('batch-inputs')
+          .upload(fileName, blob));
+      }
+
+      if (uploadError) throw uploadError;
 
       // Create batch in database
       const { data: batch, error } = await supabase
@@ -65,7 +81,8 @@ const NewBatch = () => {
           label: batchLabel,
           max_parallelism: parseInt(maxParallelism),
           total_eids: eids.length,
-          status: 'PENDING'
+          status: 'PENDING',
+          file_path: fileName
         })
         .select()
         .single();
