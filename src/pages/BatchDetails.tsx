@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -146,30 +147,34 @@ const BatchDetails = () => {
     enabled: !!id
   });
 
-  const { data: batchLogs = [], isLoading: logsLoading } = useQuery({
-    queryKey: ['batch-logs', id],
-    queryFn: async () => {
-      if (!id) throw new Error('No batch ID provided');
-      
+  // Real-time logs subscription with improved error handling
+  useEffect(() => {
+    if (!id) return;
+
+    console.log('Setting up real-time subscription for batch logs:', id);
+    
+    // Initial logs fetch
+    const fetchInitialLogs = async () => {
+      console.log('Fetching initial logs...');
       const { data, error } = await supabase
         .from('batch_logs')
         .select('*')
         .eq('batch_id', id)
-        .order('timestamp', { ascending: false })
-        .limit(100);
+        .order('timestamp', { ascending: true });
       
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!id
-  });
+      if (error) {
+        console.error('Error fetching initial logs:', error);
+      } else {
+        console.log('Initial logs fetched:', data?.length || 0);
+        setLiveLogs(data || []);
+      }
+    };
 
-  // Real-time logs subscription
-  useEffect(() => {
-    if (!id) return;
+    fetchInitialLogs();
 
-    const logsSubscription = supabase
-      .channel('batch-logs')
+    // Set up real-time subscription
+    const channel = supabase
+      .channel(`batch-logs-${id}`)
       .on(
         'postgres_changes',
         {
@@ -179,28 +184,17 @@ const BatchDetails = () => {
           filter: `batch_id=eq.${id}`,
         },
         (payload) => {
+          console.log('New log received:', payload.new);
           setLiveLogs(prev => [...prev, payload.new]);
         }
       )
-      .subscribe();
-
-    // Initial logs fetch
-    const fetchLogs = async () => {
-      const { data } = await supabase
-        .from('batch_logs')
-        .select('*')
-        .eq('batch_id', id)
-        .order('timestamp', { ascending: true });
-      
-      if (data) {
-        setLiveLogs(data);
-      }
-    };
-
-    fetchLogs();
+      .subscribe((status) => {
+        console.log('Subscription status:', status);
+      });
 
     return () => {
-      supabase.removeChannel(logsSubscription);
+      console.log('Cleaning up subscription');
+      supabase.removeChannel(channel);
     };
   }, [id]);
 
@@ -208,6 +202,32 @@ const BatchDetails = () => {
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [liveLogs]);
+
+  // Real-time subscription for batch status updates
+  useEffect(() => {
+    if (!id) return;
+
+    const channel = supabase
+      .channel(`batch-updates-${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'batches',
+          filter: `id=eq.${id}`,
+        },
+        () => {
+          console.log('Batch updated, invalidating queries');
+          queryClient.invalidateQueries({ queryKey: ['batch', id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id, queryClient]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -356,6 +376,9 @@ const BatchDetails = () => {
                 <CardTitle className="flex items-center space-x-2">
                   <Terminal className="h-5 w-5" />
                   <span>Live Terminal Output</span>
+                  <Badge variant="outline" className="ml-auto">
+                    {liveLogs.length} logs
+                  </Badge>
                 </CardTitle>
                 <CardDescription className="text-gray-300">
                   Real-time processing logs and output
@@ -370,7 +393,7 @@ const BatchDetails = () => {
                   ) : (
                     <div className="space-y-1">
                       {liveLogs.map((log, index) => (
-                        <div key={index} className="text-sm">
+                        <div key={log.id || index} className="text-sm">
                           <span className="text-gray-400">
                             [{new Date(log.timestamp).toLocaleTimeString()}]
                           </span>
