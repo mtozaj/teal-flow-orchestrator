@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -131,8 +132,6 @@ const BatchDetails = () => {
     }
   };
 
-  const progressPercentage = batch.total_eids > 0 ? (batch.processed_eids / batch.total_eids) * 100 : 0;
-
   if (batchLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -154,6 +153,9 @@ const BatchDetails = () => {
       </div>
     );
   }
+
+  // Calculate progress percentage only after batch is loaded
+  const progressPercentage = batch.total_eids > 0 ? (batch.processed_eids / batch.total_eids) * 100 : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
