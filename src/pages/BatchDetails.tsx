@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,13 +8,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { ArrowLeft, Activity, Clock, CheckCircle, AlertCircle, Play, Pause, Download, Terminal } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 const BatchDetails = () => {
   const { id } = useParams<{ id: string }>();
   const [liveLogs, setLiveLogs] = useState<any[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: batch, isLoading: batchLoading } = useQuery({
     queryKey: ['batch', id],
@@ -29,13 +31,87 @@ const BatchDetails = () => {
         .single();
       
       if (error) throw error;
-      return {
-        ...data,
-        progress: data.total_eids > 0 ? Math.round((data.processed_eids / data.total_eids) * 100) : 0
-      };
+      return data;
     },
     enabled: !!id
   });
+
+  // Mutation to start batch processing
+  const startBatchMutation = useMutation({
+    mutationFn: async () => {
+      if (!id) throw new Error('No batch ID provided');
+      
+      const { data, error } = await supabase
+        .from('batches')
+        .update({ 
+          status: 'RUNNING',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Batch Started",
+        description: "The batch processing has been initiated successfully.",
+      });
+      // Invalidate and refetch batch data
+      queryClient.invalidateQueries({ queryKey: ['batch', id] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Starting Batch",
+        description: error instanceof Error ? error.message : "Failed to start batch processing.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation to pause batch processing
+  const pauseBatchMutation = useMutation({
+    mutationFn: async () => {
+      if (!id) throw new Error('No batch ID provided');
+      
+      const { data, error } = await supabase
+        .from('batches')
+        .update({ 
+          status: 'PENDING',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Batch Paused",
+        description: "The batch processing has been paused.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['batch', id] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Pausing Batch",
+        description: error instanceof Error ? error.message : "Failed to pause batch processing.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const handleStartBatch = () => {
+    startBatchMutation.mutate();
+  };
+
+  const handlePauseBatch = () => {
+    pauseBatchMutation.mutate();
+  };
 
   const { data: esimResults = [], isLoading: resultsLoading } = useQuery({
     queryKey: ['esim-results', id],
@@ -183,15 +259,25 @@ const BatchDetails = () => {
             <div className="flex items-center space-x-4">
               {getStatusBadge(batch.status)}
               {batch.status === 'RUNNING' && (
-                <Button variant="outline" size="sm">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handlePauseBatch}
+                  disabled={pauseBatchMutation.isPending}
+                >
                   <Pause className="h-4 w-4 mr-2" />
-                  Pause
+                  {pauseBatchMutation.isPending ? 'Pausing...' : 'Pause'}
                 </Button>
               )}
               {batch.status === 'PENDING' && (
-                <Button variant="default" size="sm">
+                <Button 
+                  variant="default" 
+                  size="sm"
+                  onClick={handleStartBatch}
+                  disabled={startBatchMutation.isPending}
+                >
                   <Play className="h-4 w-4 mr-2" />
-                  Start
+                  {startBatchMutation.isPending ? 'Starting...' : 'Start'}
                 </Button>
               )}
             </div>
