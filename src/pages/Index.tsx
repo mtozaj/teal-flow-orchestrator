@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,8 +35,7 @@ const Dashboard = () => {
     queryFn: async () => {
       const { data: batches } = await supabase
         .from('batches')
-        .select('status, success_count, failure_count, processed_eids')
-        .execute();
+        .select('status, success_count, failure_count, processed_eids');
 
       const activeBatches = batches?.filter(b => b.status === 'RUNNING').length || 0;
       const totalProcessed = batches?.reduce((sum, b) => sum + b.processed_eids, 0) || 0;
