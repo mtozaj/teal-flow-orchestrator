@@ -9,7 +9,7 @@ from supabase import create_client, Client
 # Lock to synchronize console output from multiple threads
 print_lock = threading.Lock()
 
-SUPABASE_URL = "https://sciftjvjlpemhkvtokhi.supabase.co"
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 BATCH_ID = os.environ.get("BATCH_ID", "local")
 
