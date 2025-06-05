@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,6 +29,7 @@ const NewBatch = () => {
       const text = await file.text();
       const eids = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
       setCsvEidCount(eids.length);
+      console.log('CSV processed:', eids.length, 'EIDs found');
     } catch (error) {
       console.error('Error processing CSV:', error);
       setCsvEidCount(0);
@@ -153,9 +153,46 @@ const NewBatch = () => {
   };
 
   const isFormValid = () => {
-    if (!batchLabel.trim()) return false;
-    if (inputMethod === 'csv' && (!csvFile || isProcessingCsv)) return false;
-    if (inputMethod === 'manual' && !manualEids.trim()) return false;
+    console.log('Form validation check:', {
+      batchLabel: batchLabel.trim(),
+      inputMethod,
+      csvFile: !!csvFile,
+      isProcessingCsv,
+      csvEidCount,
+      manualEids: manualEids.trim()
+    });
+
+    // Must have a batch label
+    if (!batchLabel.trim()) {
+      console.log('Form invalid: no batch label');
+      return false;
+    }
+
+    // For CSV input
+    if (inputMethod === 'csv') {
+      if (!csvFile) {
+        console.log('Form invalid: no CSV file');
+        return false;
+      }
+      if (isProcessingCsv) {
+        console.log('Form invalid: still processing CSV');
+        return false;
+      }
+      if (csvEidCount === null || csvEidCount === 0) {
+        console.log('Form invalid: no EIDs in CSV');
+        return false;
+      }
+    }
+
+    // For manual input
+    if (inputMethod === 'manual') {
+      if (!manualEids.trim()) {
+        console.log('Form invalid: no manual EIDs');
+        return false;
+      }
+    }
+
+    console.log('Form is valid');
     return true;
   };
 
