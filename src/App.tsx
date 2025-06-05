@@ -8,7 +8,15 @@ import BatchDetails from '@/pages/BatchDetails';
 import Settings from '@/pages/Settings';
 import NotFound from '@/pages/NotFound';
 
-const queryClient = new QueryClient();
+// Create a stable query client instance
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      retry: 1,
+    },
+  },
+});
 
 function App() {
   return (
