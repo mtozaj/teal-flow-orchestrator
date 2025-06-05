@@ -17,10 +17,26 @@ const NewBatch = () => {
   const [maxParallelism, setMaxParallelism] = useState('8');
   const [inputMethod, setInputMethod] = useState<'csv' | 'manual'>('csv');
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvEidCount, setCsvEidCount] = useState<number | null>(null);
   const [manualEids, setManualEids] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [isProcessingCsv, setIsProcessingCsv] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  const processCsvFile = useCallback(async (file: File) => {
+    setIsProcessingCsv(true);
+    try {
+      const text = await file.text();
+      const eids = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+      setCsvEidCount(eids.length);
+    } catch (error) {
+      console.error('Error processing CSV:', error);
+      setCsvEidCount(0);
+    } finally {
+      setIsProcessingCsv(false);
+    }
+  }, []);
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -34,8 +50,10 @@ const NewBatch = () => {
         return;
       }
       setCsvFile(file);
+      setCsvEidCount(null);
+      processCsvFile(file);
     }
-  }, [toast]);
+  }, [toast, processCsvFile]);
 
   const parseEidsFromInput = async (): Promise<string[]> => {
     if (inputMethod === 'csv' && csvFile) {
@@ -121,14 +139,24 @@ const NewBatch = () => {
   };
 
   const getEidCount = () => {
-    if (inputMethod === 'csv' && csvFile) {
-      return 'Processing...'; // Would need to parse file to get exact count
+    if (inputMethod === 'csv') {
+      if (!csvFile) return '0 EIDs';
+      if (isProcessingCsv) return 'Processing...';
+      if (csvEidCount !== null) return `${csvEidCount} EIDs`;
+      return 'Processing...';
     }
     if (inputMethod === 'manual') {
       const lines = manualEids.split('\n').filter(line => line.trim().length > 0);
       return `${lines.length} EIDs`;
     }
     return '0 EIDs';
+  };
+
+  const isFormValid = () => {
+    if (!batchLabel.trim()) return false;
+    if (inputMethod === 'csv' && (!csvFile || isProcessingCsv)) return false;
+    if (inputMethod === 'manual' && !manualEids.trim()) return false;
+    return true;
   };
 
   return (
@@ -306,7 +334,7 @@ const NewBatch = () => {
             </Link>
             <Button 
               type="submit" 
-              disabled={isUploading || (!csvFile && inputMethod === 'csv') || (!manualEids.trim() && inputMethod === 'manual') || !batchLabel.trim()}
+              disabled={isUploading || !isFormValid()}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
             >
               {isUploading ? (
