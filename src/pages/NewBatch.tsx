@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -152,6 +153,32 @@ const NewBatch = () => {
     return '0 EIDs';
   };
 
+  const getValidationErrors = () => {
+    const errors = [];
+    
+    if (!batchLabel.trim()) {
+      errors.push('Batch label is required');
+    }
+    
+    if (inputMethod === 'csv') {
+      if (!csvFile) {
+        errors.push('CSV file must be uploaded');
+      } else if (isProcessingCsv) {
+        errors.push('CSV file is still processing');
+      } else if (csvEidCount === null || csvEidCount === 0) {
+        errors.push('CSV file must contain valid EIDs');
+      }
+    }
+    
+    if (inputMethod === 'manual') {
+      if (!manualEids.trim()) {
+        errors.push('EIDs must be entered manually');
+      }
+    }
+    
+    return errors;
+  };
+
   const isFormValid = () => {
     console.log('Form validation check:', {
       batchLabel: batchLabel.trim(),
@@ -196,6 +223,9 @@ const NewBatch = () => {
     return true;
   };
 
+  const validationErrors = getValidationErrors();
+  const hasErrors = validationErrors.length > 0;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       {/* Header */}
@@ -231,14 +261,24 @@ const NewBatch = () => {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="batch-label">Batch Label</Label>
+                  <Label htmlFor="batch-label" className="flex items-center space-x-1">
+                    <span>Batch Label</span>
+                    <span className="text-red-500">*</span>
+                  </Label>
                   <Input
                     id="batch-label"
                     placeholder="e.g., Production Batch #248"
                     value={batchLabel}
                     onChange={(e) => setBatchLabel(e.target.value)}
                     required
+                    className={!batchLabel.trim() ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}
                   />
+                  {!batchLabel.trim() && (
+                    <p className="text-sm text-red-600 flex items-center space-x-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Batch label is required</span>
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="max-parallelism">Max Parallel Workers</Label>
@@ -267,6 +307,7 @@ const NewBatch = () => {
                   <FileText className="h-5 w-5 text-white" />
                 </div>
                 <span>EID Input</span>
+                <span className="text-red-500">*</span>
               </CardTitle>
               <CardDescription>
                 Upload a CSV file or manually enter EIDs to process
@@ -298,7 +339,9 @@ const NewBatch = () => {
               {/* CSV Upload */}
               {inputMethod === 'csv' && (
                 <div className="space-y-4">
-                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center hover:border-gray-400 dark:hover:border-gray-500 transition-colors">
+                  <div className={`border-2 border-dashed rounded-lg p-8 text-center hover:border-gray-400 dark:hover:border-gray-500 transition-colors ${
+                    !csvFile ? 'border-red-300 dark:border-red-600' : 'border-gray-300 dark:border-gray-600'
+                  }`}>
                     <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                     <div className="space-y-2">
                       <p className="text-lg font-semibold">Upload CSV File</p>
@@ -320,6 +363,13 @@ const NewBatch = () => {
                     </div>
                   </div>
                   
+                  {!csvFile && (
+                    <p className="text-sm text-red-600 flex items-center space-x-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>CSV file is required</span>
+                    </p>
+                  )}
+                  
                   {csvFile && (
                     <div className="flex items-center justify-between p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
                       <div className="flex items-center space-x-3">
@@ -334,6 +384,13 @@ const NewBatch = () => {
                       <Badge variant="secondary">{getEidCount()}</Badge>
                     </div>
                   )}
+
+                  {csvFile && csvEidCount === 0 && (
+                    <p className="text-sm text-red-600 flex items-center space-x-1">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>CSV file contains no valid EIDs</span>
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -341,19 +398,30 @@ const NewBatch = () => {
               {inputMethod === 'manual' && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="manual-eids">EIDs (one per line)</Label>
+                    <Label htmlFor="manual-eids" className="flex items-center space-x-1">
+                      <span>EIDs (one per line)</span>
+                      <span className="text-red-500">*</span>
+                    </Label>
                     <Textarea
                       id="manual-eids"
                       placeholder="8949000000000000001&#10;8949000000000000002&#10;8949000000000000003"
                       value={manualEids}
                       onChange={(e) => setManualEids(e.target.value)}
                       rows={8}
-                      className="font-mono text-sm"
+                      className={`font-mono text-sm ${!manualEids.trim() ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
                     />
                     <div className="flex justify-between items-center">
-                      <p className="text-sm text-muted-foreground">
-                        Enter each EID on a new line
-                      </p>
+                      <div className="flex items-center space-x-2">
+                        <p className="text-sm text-muted-foreground">
+                          Enter each EID on a new line
+                        </p>
+                        {!manualEids.trim() && (
+                          <p className="text-sm text-red-600 flex items-center space-x-1">
+                            <AlertCircle className="h-4 w-4" />
+                            <span>EIDs are required</span>
+                          </p>
+                        )}
+                      </div>
                       <Badge variant="secondary">{getEidCount()}</Badge>
                     </div>
                   </div>
@@ -361,6 +429,25 @@ const NewBatch = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* Validation Summary */}
+          {hasErrors && (
+            <Card className="border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800">
+              <CardContent className="pt-6">
+                <div className="flex items-center space-x-2 mb-3">
+                  <AlertCircle className="h-5 w-5 text-red-600" />
+                  <h3 className="font-semibold text-red-800 dark:text-red-200">
+                    Please fix the following issues:
+                  </h3>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-sm text-red-700 dark:text-red-300">
+                  {validationErrors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Submit */}
           <div className="flex justify-end space-x-4">
