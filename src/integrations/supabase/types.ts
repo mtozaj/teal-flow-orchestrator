@@ -46,6 +46,7 @@ export type Database = {
       }
       batches: {
         Row: {
+          average_processing_time_seconds: number | null
           completed_at: string | null
           created_at: string
           failure_count: number
@@ -54,12 +55,14 @@ export type Database = {
           label: string
           max_parallelism: number
           processed_eids: number
+          started_at: string | null
           status: Database["public"]["Enums"]["batch_status"]
           success_count: number
           total_eids: number
           updated_at: string
         }
         Insert: {
+          average_processing_time_seconds?: number | null
           completed_at?: string | null
           created_at?: string
           failure_count?: number
@@ -68,12 +71,14 @@ export type Database = {
           label: string
           max_parallelism?: number
           processed_eids?: number
+          started_at?: string | null
           status?: Database["public"]["Enums"]["batch_status"]
           success_count?: number
           total_eids?: number
           updated_at?: string
         }
         Update: {
+          average_processing_time_seconds?: number | null
           completed_at?: string | null
           created_at?: string
           failure_count?: number
@@ -82,6 +87,7 @@ export type Database = {
           label?: string
           max_parallelism?: number
           processed_eids?: number
+          started_at?: string | null
           status?: Database["public"]["Enums"]["batch_status"]
           success_count?: number
           total_eids?: number
@@ -105,6 +111,9 @@ export type Database = {
           global_status: string | null
           global_timestamp: string | null
           id: string
+          processing_completed_at: string | null
+          processing_duration_seconds: number | null
+          processing_started_at: string | null
           tmo_iccid: string | null
           tmo_plan_request_id: string | null
           tmo_status: string | null
@@ -130,6 +139,9 @@ export type Database = {
           global_status?: string | null
           global_timestamp?: string | null
           id?: string
+          processing_completed_at?: string | null
+          processing_duration_seconds?: number | null
+          processing_started_at?: string | null
           tmo_iccid?: string | null
           tmo_plan_request_id?: string | null
           tmo_status?: string | null
@@ -155,6 +167,9 @@ export type Database = {
           global_status?: string | null
           global_timestamp?: string | null
           id?: string
+          processing_completed_at?: string | null
+          processing_duration_seconds?: number | null
+          processing_started_at?: string | null
           tmo_iccid?: string | null
           tmo_plan_request_id?: string | null
           tmo_status?: string | null
@@ -180,7 +195,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      update_batch_average_processing_time: {
+        Args: { batch_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       batch_status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,8 +9,12 @@ import { Upload, Activity, Clock, CheckCircle, AlertCircle, Play, Settings, BarC
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { Analytics } from '@/components/Analytics';
 
 const Dashboard = () => {
+  const { stats } = useAnalytics();
+
   const { data: recentBatches = [], isLoading } = useQuery({
     queryKey: ['batches'],
     queryFn: async () => {
@@ -27,30 +32,27 @@ const Dashboard = () => {
         total: batch.total_eids,
         failed: batch.failure_count
       }));
-    }
+    },
+    refetchInterval: 3000 // Refetch every 3 seconds for live updates
   });
 
-  const { data: stats } = useQuery({
-    queryKey: ['dashboard-stats'],
-    queryFn: async () => {
-      const { data: batches } = await supabase
-        .from('batches')
-        .select('status, success_count, failure_count, processed_eids');
+  // Set up real-time subscription for batches
+  useEffect(() => {
+    const channel = supabase
+      .channel('batches-realtime')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'batches' },
+        () => {
+          // Trigger refetch when batches change
+          console.log('Batch data updated - refreshing...');
+        }
+      )
+      .subscribe();
 
-      const activeBatches = batches?.filter(b => b.status === 'RUNNING').length || 0;
-      const totalProcessed = batches?.reduce((sum, b) => sum + b.processed_eids, 0) || 0;
-      const totalSuccess = batches?.reduce((sum, b) => sum + b.success_count, 0) || 0;
-      const totalFailure = batches?.reduce((sum, b) => sum + b.failure_count, 0) || 0;
-      const successRate = totalProcessed > 0 ? ((totalSuccess / totalProcessed) * 100).toFixed(1) : '0.0';
-
-      return {
-        activeBatches,
-        successRate: `${successRate}%`,
-        totalProcessed: totalProcessed > 1000 ? `${(totalProcessed / 1000).toFixed(1)}k` : totalProcessed.toString(),
-        avgProcessing: '2.4s' // This would need to be calculated from actual timing data
-      };
-    }
-  });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -246,13 +248,7 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-center py-12">
-                  <BarChart3 className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">Analytics Dashboard</h3>
-                  <p className="text-muted-foreground">
-                    Detailed charts and metrics will be displayed here
-                  </p>
-                </div>
+                <Analytics />
               </CardContent>
             </Card>
           </TabsContent>
