@@ -21,6 +21,15 @@ const NewBatch = () => {
   const [manualEids, setManualEids] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessingCsv, setIsProcessingCsv] = useState(false);
+  
+  // Track user interactions
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [touchedFields, setTouchedFields] = useState({
+    batchLabel: false,
+    csvFile: false,
+    manualEids: false
+  });
+  
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -52,6 +61,7 @@ const NewBatch = () => {
       }
       setCsvFile(file);
       setCsvEidCount(null);
+      setTouchedFields(prev => ({ ...prev, csvFile: true }));
       processCsvFile(file);
     }
   }, [toast, processCsvFile]);
@@ -68,6 +78,7 @@ const NewBatch = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setHasAttemptedSubmit(true);
     setIsUploading(true);
 
     try {
@@ -223,8 +234,26 @@ const NewBatch = () => {
     return true;
   };
 
+  // Helper functions to determine when to show errors
+  const shouldShowBatchLabelError = () => {
+    return (hasAttemptedSubmit || touchedFields.batchLabel) && !batchLabel.trim();
+  };
+
+  const shouldShowCsvError = () => {
+    return inputMethod === 'csv' && (hasAttemptedSubmit || touchedFields.csvFile) && !csvFile;
+  };
+
+  const shouldShowCsvContentError = () => {
+    return inputMethod === 'csv' && csvFile && !isProcessingCsv && csvEidCount === 0;
+  };
+
+  const shouldShowManualEidsError = () => {
+    return inputMethod === 'manual' && (hasAttemptedSubmit || touchedFields.manualEids) && !manualEids.trim();
+  };
+
   const validationErrors = getValidationErrors();
   const hasErrors = validationErrors.length > 0;
+  const shouldShowValidationSummary = hasAttemptedSubmit && hasErrors;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -270,10 +299,11 @@ const NewBatch = () => {
                     placeholder="e.g., Production Batch #248"
                     value={batchLabel}
                     onChange={(e) => setBatchLabel(e.target.value)}
+                    onBlur={() => setTouchedFields(prev => ({ ...prev, batchLabel: true }))}
                     required
-                    className={!batchLabel.trim() ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}
+                    className={shouldShowBatchLabelError() ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}
                   />
-                  {!batchLabel.trim() && (
+                  {shouldShowBatchLabelError() && (
                     <p className="text-sm text-red-600 flex items-center space-x-1">
                       <AlertCircle className="h-4 w-4" />
                       <span>Batch label is required</span>
@@ -340,7 +370,7 @@ const NewBatch = () => {
               {inputMethod === 'csv' && (
                 <div className="space-y-4">
                   <div className={`border-2 border-dashed rounded-lg p-8 text-center hover:border-gray-400 dark:hover:border-gray-500 transition-colors ${
-                    !csvFile ? 'border-red-300 dark:border-red-600' : 'border-gray-300 dark:border-gray-600'
+                    shouldShowCsvError() ? 'border-red-300 dark:border-red-600' : 'border-gray-300 dark:border-gray-600'
                   }`}>
                     <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                     <div className="space-y-2">
@@ -363,7 +393,7 @@ const NewBatch = () => {
                     </div>
                   </div>
                   
-                  {!csvFile && (
+                  {shouldShowCsvError() && (
                     <p className="text-sm text-red-600 flex items-center space-x-1">
                       <AlertCircle className="h-4 w-4" />
                       <span>CSV file is required</span>
@@ -385,7 +415,7 @@ const NewBatch = () => {
                     </div>
                   )}
 
-                  {csvFile && csvEidCount === 0 && (
+                  {shouldShowCsvContentError() && (
                     <p className="text-sm text-red-600 flex items-center space-x-1">
                       <AlertCircle className="h-4 w-4" />
                       <span>CSV file contains no valid EIDs</span>
@@ -407,15 +437,16 @@ const NewBatch = () => {
                       placeholder="8949000000000000001&#10;8949000000000000002&#10;8949000000000000003"
                       value={manualEids}
                       onChange={(e) => setManualEids(e.target.value)}
+                      onBlur={() => setTouchedFields(prev => ({ ...prev, manualEids: true }))}
                       rows={8}
-                      className={`font-mono text-sm ${!manualEids.trim() ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
+                      className={`font-mono text-sm ${shouldShowManualEidsError() ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
                     />
                     <div className="flex justify-between items-center">
                       <div className="flex items-center space-x-2">
                         <p className="text-sm text-muted-foreground">
                           Enter each EID on a new line
                         </p>
-                        {!manualEids.trim() && (
+                        {shouldShowManualEidsError() && (
                           <p className="text-sm text-red-600 flex items-center space-x-1">
                             <AlertCircle className="h-4 w-4" />
                             <span>EIDs are required</span>
@@ -430,8 +461,8 @@ const NewBatch = () => {
             </CardContent>
           </Card>
 
-          {/* Validation Summary */}
-          {hasErrors && (
+          {/* Validation Summary - only show after submit attempt */}
+          {shouldShowValidationSummary && (
             <Card className="border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800">
               <CardContent className="pt-6">
                 <div className="flex items-center space-x-2 mb-3">
