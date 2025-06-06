@@ -17,6 +17,7 @@ const BatchDetails = () => {
   const { id } = useParams<{ id: string }>();
   const [liveLogs, setLiveLogs] = useState<any[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const lastTimestampRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -147,13 +148,12 @@ const BatchDetails = () => {
     enabled: !!id
   });
 
-  // Real-time logs subscription with improved error handling
+  // Real-time logs subscription with polling fallback
   useEffect(() => {
     if (!id) return;
 
     console.log('Setting up real-time subscription for batch logs:', id);
-    
-    // Initial logs fetch
+
     const fetchInitialLogs = async () => {
       console.log('Fetching initial logs...');
       const { data, error } = await supabase
@@ -161,11 +161,14 @@ const BatchDetails = () => {
         .select('*')
         .eq('batch_id', id)
         .order('timestamp', { ascending: true });
-      
+
       if (error) {
         console.error('Error fetching initial logs:', error);
       } else {
         console.log('Initial logs fetched:', data?.length || 0);
+        if (data && data.length > 0) {
+          lastTimestampRef.current = data[data.length - 1].timestamp;
+        }
         setLiveLogs(data || []);
       }
     };
@@ -185,6 +188,7 @@ const BatchDetails = () => {
         },
         (payload) => {
           console.log('New log received:', payload.new);
+          lastTimestampRef.current = payload.new.timestamp;
           setLiveLogs(prev => [...prev, payload.new]);
         }
       )
@@ -192,9 +196,35 @@ const BatchDetails = () => {
         console.log('Subscription status:', status);
       });
 
+    // Poll for new logs in case realtime fails
+    const pollInterval = setInterval(async () => {
+      const since = lastTimestampRef.current || '1970-01-01T00:00:00Z';
+      const { data, error } = await supabase
+        .from('batch_logs')
+        .select('*')
+        .eq('batch_id', id)
+        .gt('timestamp', since)
+        .order('timestamp', { ascending: true });
+
+      if (error) {
+        console.error('Polling logs error:', error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        lastTimestampRef.current = data[data.length - 1].timestamp;
+        setLiveLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const newLogs = data.filter(l => !existingIds.has(l.id));
+          return [...prev, ...newLogs];
+        });
+      }
+    }, 5000);
+
     return () => {
       console.log('Cleaning up subscription');
       supabase.removeChannel(channel);
+      clearInterval(pollInterval);
     };
   }, [id]);
 
