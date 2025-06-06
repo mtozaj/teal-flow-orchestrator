@@ -10,31 +10,228 @@ import { Link, useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 
 const BatchDetails = () => {
-  const { id } = useParams();
-  const [logs, setLogs] = useState<Array<any>>([]);
-  const [isRunning, setIsRunning] = useState(true);
-  const [batchData, setBatchData] = useState<any>(null);
-  const [results, setResults] = useState<Array<any>>([]);
+  const { id } = useParams<{ id: string }>();
+  const [liveLogs, setLiveLogs] = useState<any[]>([]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const lastTimestampRef = useRef<string | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
+  const { data: batch, isLoading: batchLoading } = useQuery({
+    queryKey: ['batch', id],
+    queryFn: async () => {
+      if (!id) throw new Error('No batch ID provided');
+      
+      const { data, error } = await supabase
+        .from('batches')
+        .select('*')
+        .eq('id', id)
+        .single();
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id
+  });
+
+  // Mutation to start batch processing with API keys
+  const startBatchMutation = useMutation({
+    mutationFn: async () => {
+      if (!id) throw new Error('No batch ID provided');
+      
+      // Get API keys from localStorage
+      const apiKey = localStorage.getItem('tealApiKey');
+      const apiSecret = localStorage.getItem('tealApiSecret');
+      const tmoUuid = localStorage.getItem('tmoUuid') || 'cda438862b284bcdaec82ee516eada14';
+      const verizonUuid = localStorage.getItem('verizonUuid') || '3c8fbbbc3ab442b8bc2f244c5180f9d1';
+      const globalUuid = localStorage.getItem('globalUuid') || '493bdfc2eccb415ea63796187f830784';
+      const attUuid = localStorage.getItem('attUuid') || 'cd27b630772d4d8f915173488b7bfcf1';
+
+      if (!apiKey || !apiSecret) {
+        throw new Error('API keys not found. Please configure them in Settings first.');
+      }
+
+      // Call the edge function
+      const { data, error } = await supabase.functions.invoke('process-batch', {
+        body: {
+          batchId: id,
+          apiKey,
+          apiSecret,
+          planUuids: {
+            tmo: tmoUuid,
+            verizon: verizonUuid,
+            global: globalUuid,
+            att: attUuid
+          }
+        }
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Batch Processing Started",
+        description: "The batch processing has been initiated successfully using your API credentials.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['batch', id] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Starting Batch",
+        description: error instanceof Error ? error.message : "Failed to start batch processing.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Mutation to pause batch processing
+  const pauseBatchMutation = useMutation({
+    mutationFn: async () => {
+      if (!id) throw new Error('No batch ID provided');
+      
+      const { data, error } = await supabase
+        .from('batches')
+        .update({ 
+          status: 'PENDING',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Batch Paused",
+        description: "The batch processing has been paused.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['batch', id] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error Pausing Batch",
+        description: error instanceof Error ? error.message : "Failed to pause batch processing.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const handleStartBatch = () => {
+    startBatchMutation.mutate();
+  };
+
+  const handlePauseBatch = () => {
+    pauseBatchMutation.mutate();
+  };
+
+  const { data: esimResults = [], isLoading: resultsLoading } = useQuery({
+    queryKey: ['esim-results', id],
+    queryFn: async () => {
+      if (!id) throw new Error('No batch ID provided');
+      
+      const { data, error } = await supabase
+        .from('esim_results')
+        .select('*')
+        .eq('batch_id', id)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id
+  });
+
+  // Real-time logs subscription with polling fallback
   useEffect(() => {
     if (!id) return;
 
-    supabase
-      .from('batches')
-      .select('*')
-      .eq('id', id)
-      .single()
-      .then(({ data }) => {
-        setBatchData(data);
+    console.log('Setting up real-time subscription for batch logs:', id);
+
+    const fetchInitialLogs = async () => {
+      console.log('Fetching initial logs...');
+      const { data, error } = await supabase
+        .from('batch_logs')
+        .select('*')
+        .eq('batch_id', id)
+        .order('timestamp', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching initial logs:', error);
+      } else {
+        console.log('Initial logs fetched:', data?.length || 0);
+        if (data && data.length > 0) {
+          lastTimestampRef.current = data[data.length - 1].timestamp;
+        }
+        setLiveLogs(data || []);
+      }
+    };
+
+    fetchInitialLogs();
+
+    // Set up real-time subscription
+    const channel = supabase
+      .channel(`batch-logs-${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'batch_logs',
+          filter: `batch_id=eq.${id}`,
+        },
+        (payload) => {
+          console.log('New log received:', payload.new);
+          lastTimestampRef.current = payload.new.timestamp;
+          setLiveLogs(prev => [...prev, payload.new]);
+        }
+      )
+      .subscribe((status) => {
+        console.log('Subscription status:', status);
       });
 
-    supabase
-      .from('esim_results')
-      .select('*')
-      .eq('batch_id', id)
-      .then(({ data }) => {
-        setResults(data ?? []);
-      });
+    // Poll for new logs in case realtime fails
+    const pollInterval = setInterval(async () => {
+      const since = lastTimestampRef.current || '1970-01-01T00:00:00Z';
+      const { data, error } = await supabase
+        .from('batch_logs')
+        .select('*')
+        .eq('batch_id', id)
+        .gt('timestamp', since)
+        .order('timestamp', { ascending: true });
+
+      if (error) {
+        console.error('Polling logs error:', error);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        lastTimestampRef.current = data[data.length - 1].timestamp;
+        setLiveLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const newLogs = data.filter(l => !existingIds.has(l.id));
+          return [...prev, ...newLogs];
+        });
+      }
+    }, 5000);
+
+    return () => {
+      console.log('Cleaning up subscription');
+      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+    };
+  }, [id]);
+
+  // Auto-scroll to bottom when new logs arrive
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [liveLogs]);
+
+  // Real-time subscription for batch status updates
+  useEffect(() => {
+    if (!id) return;
 
     const channel = supabase
       .channel('realtime:public:batch_logs')
