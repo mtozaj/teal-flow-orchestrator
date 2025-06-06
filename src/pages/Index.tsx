@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,11 +7,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, Activity, Clock, CheckCircle, AlertCircle, Play, Settings, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { Analytics } from '@/components/Analytics';
 
 const Dashboard = () => {
   const [recentBatches, setRecentBatches] = useState<Array<any>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const { stats } = useAnalytics();
 
   useEffect(() => {
+    setIsLoading(true);
     supabase
       .from('batches')
       .select('*')
@@ -21,8 +25,8 @@ const Dashboard = () => {
         if (data) {
           setRecentBatches(data as any[]);
         }
+        setIsLoading(false);
       });
-
   }, []);
 
   const getStatusColor = (status: string) => {
@@ -167,43 +171,47 @@ const Dashboard = () => {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {recentBatches.map((batch) => (
-                      <div key={batch.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center space-x-3">
-                            <div className={`w-3 h-3 rounded-full ${getStatusColor(batch.status)}`}></div>
-                            <h4 className="font-semibold">{batch.label}</h4>
-                            <Badge variant="outline" className="text-xs">
-                              {getStatusIcon(batch.status)}
-                              <span className="ml-1">{batch.status}</span>
-                            </Badge>
+                    {recentBatches.map((batch) => {
+                      const progress = batch.total_eids > 0 ? Math.round((batch.processed_eids / batch.total_eids) * 100) : 0;
+                      
+                      return (
+                        <div key={batch.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center space-x-3">
+                              <div className={`w-3 h-3 rounded-full ${getStatusColor(batch.status)}`}></div>
+                              <h4 className="font-semibold">{batch.label}</h4>
+                              <Badge variant="outline" className="text-xs">
+                                {getStatusIcon(batch.status)}
+                                <span className="ml-1">{batch.status}</span>
+                              </Badge>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-sm text-muted-foreground">
+                                {new Date(batch.created_at).toLocaleTimeString()}
+                              </span>
+                              <Link to={`/batch/${batch.id}`}>
+                                <Button size="sm" variant="outline">
+                                  <Play className="h-3 w-3 mr-1" />
+                                  View
+                                </Button>
+                              </Link>
+                            </div>
                           </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-sm text-muted-foreground">
-                              {new Date(batch.created_at).toLocaleTimeString()}
-                            </span>
-                            <Link to={`/batch/${batch.id}`}>
-                              <Button size="sm" variant="outline">
-                                <Play className="h-3 w-3 mr-1" />
-                                View
-                              </Button>
-                            </Link>
+                          
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                              <span>Progress: {batch.processed_eids}/{batch.total_eids}</span>
+                              <span>{progress}%</span>
+                            </div>
+                            <Progress value={progress} className="h-2" />
+                            <div className="flex justify-between text-xs text-muted-foreground">
+                              <span>✅ {batch.success_count} completed</span>
+                              <span>❌ {batch.failure_count} failed</span>
+                            </div>
                           </div>
                         </div>
-                        
-                        <div className="space-y-2">
-                          <div className="flex justify-between text-sm">
-                            <span>Progress: {batch.completed}/{batch.total}</span>
-                            <span>{batch.progress}%</span>
-                          </div>
-                          <Progress value={batch.progress} className="h-2" />
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>✅ {batch.success_count} completed</span>
-                            <span>❌ {batch.failed} failed</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
