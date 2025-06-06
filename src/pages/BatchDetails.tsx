@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,11 +8,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ArrowLeft, Download, RefreshCw, Play, Pause, Terminal, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
 const BatchDetails = () => {
   const { id } = useParams<{ id: string }>();
   const [liveLogs, setLiveLogs] = useState<any[]>([]);
+  const [isRunning, setIsRunning] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const lastTimestampRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
@@ -33,6 +37,13 @@ const BatchDetails = () => {
     },
     enabled: !!id
   });
+
+  // Set isRunning based on batch status
+  useEffect(() => {
+    if (batch) {
+      setIsRunning(batch.status === 'RUNNING');
+    }
+  }, [batch]);
 
   // Mutation to start batch processing with API keys
   const startBatchMutation = useMutation({
@@ -229,26 +240,6 @@ const BatchDetails = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [liveLogs]);
 
-  // Real-time subscription for batch status updates
-  useEffect(() => {
-    if (!id) return;
-
-    const channel = supabase
-      .channel('realtime:public:batch_logs')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'batch_logs', filter: `batch_id=eq.${id}` },
-        payload => {
-          setLogs(prev => [...prev.slice(-50), payload.new]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [id]);
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'SUCCESS': return 'bg-green-500 text-white';
@@ -267,6 +258,18 @@ const BatchDetails = () => {
     }
   };
 
+  // Calculate progress and other derived values
+  const progress = batch && batch.total_eids > 0 ? Math.round((batch.processed_eids / batch.total_eids) * 100) : 0;
+  const successRate = batch && batch.processed_eids > 0 ? ((batch.success_count / batch.processed_eids) * 100).toFixed(1) : '0';
+
+  if (batchLoading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading batch details...</div>;
+  }
+
+  if (!batch) {
+    return <div className="min-h-screen flex items-center justify-center">Batch not found</div>;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       {/* Header */}
@@ -281,10 +284,10 @@ const BatchDetails = () => {
                 </Button>
               </Link>
               <div>
-                <h1 className="text-2xl font-bold">{batchData?.label}</h1>
-                {batchData?.started && (
+                <h1 className="text-2xl font-bold">{batch.label}</h1>
+                {batch.started_at && (
                   <p className="text-sm text-muted-foreground">
-                    Started {new Date(batchData.started).toLocaleString()}
+                    Started {new Date(batch.started_at).toLocaleString()}
                   </p>
                 )}
               </div>
@@ -293,7 +296,8 @@ const BatchDetails = () => {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setIsRunning(!isRunning)}
+                onClick={isRunning ? handlePauseBatch : handleStartBatch}
+                disabled={startBatchMutation.isPending || pauseBatchMutation.isPending}
               >
                 {isRunning ? (
                   <>
@@ -303,7 +307,7 @@ const BatchDetails = () => {
                 ) : (
                   <>
                     <Play className="h-4 w-4 mr-2" />
-                    Resume
+                    Start
                   </>
                 )}
               </Button>
@@ -329,8 +333,8 @@ const BatchDetails = () => {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Status</p>
                   <div className="flex items-center space-x-2 mt-1">
-                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                    <span className="text-xl font-bold">RUNNING</span>
+                    <div className={`w-3 h-3 rounded-full ${batch.status === 'RUNNING' ? 'bg-blue-500 animate-pulse' : 'bg-gray-500'}`}></div>
+                    <span className="text-xl font-bold">{batch.status}</span>
                   </div>
                 </div>
                 <CheckCircle className="h-8 w-8 text-blue-500" />
@@ -343,10 +347,10 @@ const BatchDetails = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Progress</p>
-                  <p className="text-xl font-bold">{batchData?.completed ?? 0}/{batchData?.total ?? 0}</p>
-                  <Progress value={batchData?.progress ?? 0} className="h-2 mt-2" />
+                  <p className="text-xl font-bold">{batch.processed_eids}/{batch.total_eids}</p>
+                  <Progress value={progress} className="h-2 mt-2" />
                 </div>
-                <span className="text-2xl font-bold text-blue-600">{batchData?.progress ?? 0}%</span>
+                <span className="text-2xl font-bold text-blue-600">{progress}%</span>
               </div>
             </CardContent>
           </Card>
@@ -356,15 +360,11 @@ const BatchDetails = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Success Rate</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    {batchData && batchData.completed
-                      ? (((batchData.completed - batchData.failed) / batchData.completed) * 100).toFixed(1)
-                      : '0'}%
-                  </p>
+                  <p className="text-2xl font-bold text-green-600">{successRate}%</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm text-green-600">✅ {batchData ? batchData.completed - batchData.failed : 0}</p>
-                  <p className="text-sm text-red-600">❌ {batchData?.failed ?? 0}</p>
+                  <p className="text-sm text-green-600">✅ {batch.success_count}</p>
+                  <p className="text-sm text-red-600">❌ {batch.failure_count}</p>
                 </div>
               </div>
             </CardContent>
@@ -375,7 +375,7 @@ const BatchDetails = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Workers</p>
-                  <p className="text-2xl font-bold text-purple-600">{batchData?.workers ?? 0}</p>
+                  <p className="text-2xl font-bold text-purple-600">{batch.max_parallelism}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-muted-foreground">Active</p>
@@ -415,31 +415,31 @@ const BatchDetails = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {results.map((result, index) => (
+                      {esimResults.map((result, index) => (
                         <tr key={index} className="border-b hover:bg-muted/50">
                           <td className="p-2 font-mono text-sm">{result.eid}</td>
                           <td className="p-2 text-center">
-                            <Badge className={`text-xs ${getStatusColor(result.tmo)}`}>
-                              {result.tmo}
+                            <Badge className={`text-xs ${getStatusColor(result.tmo_status || 'PENDING')}`}>
+                              {result.tmo_status || 'PENDING'}
                             </Badge>
                           </td>
                           <td className="p-2 text-center">
-                            <Badge className={`text-xs ${getStatusColor(result.vzn)}`}>
-                              {result.vzn}
+                            <Badge className={`text-xs ${getStatusColor(result.verizon_status || 'PENDING')}`}>
+                              {result.verizon_status || 'PENDING'}
                             </Badge>
                           </td>
                           <td className="p-2 text-center">
-                            <Badge className={`text-xs ${getStatusColor(result.glb)}`}>
-                              {result.glb}
+                            <Badge className={`text-xs ${getStatusColor(result.global_status || 'PENDING')}`}>
+                              {result.global_status || 'PENDING'}
                             </Badge>
                           </td>
                           <td className="p-2 text-center">
-                            <Badge className={`text-xs ${getStatusColor(result.att)}`}>
-                              {result.att}
+                            <Badge className={`text-xs ${getStatusColor(result.att_status || 'PENDING')}`}>
+                              {result.att_status || 'PENDING'}
                             </Badge>
                           </td>
                           <td className="p-2 text-right text-sm text-muted-foreground">
-                            {result.timestamp}
+                            {new Date(result.created_at).toLocaleTimeString()}
                           </td>
                         </tr>
                       ))}
@@ -461,17 +461,18 @@ const BatchDetails = () => {
               <CardContent>
                 <ScrollArea className="h-[600px] rounded-md border p-4 bg-slate-950">
                   <div className="space-y-1 font-mono text-sm">
-                    {logs.map((log, index) => (
+                    {liveLogs.map((log, index) => (
                       <div key={index} className="text-slate-300">
                         <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
                         {' '}
                         <span className={getLogLevelColor(log.level)}>[{log.level}]</span>
                         {' '}
-                        <span className="text-blue-400">[{log.eid}]</span>
+                        {log.eid && <span className="text-blue-400">[{log.eid}]</span>}
                         {' '}
                         <span>{log.message}</span>
                       </div>
                     ))}
+                    <div ref={logsEndRef} />
                   </div>
                 </ScrollArea>
               </CardContent>
