@@ -6,16 +6,25 @@ import sys
 import os
 from supabase import create_client, Client
 
-# Teal API credentials should be provided via environment variables so they can
-# be set dynamically without modifying the code.
-API_KEY = os.environ.get("TEAL_API_KEY")
-API_SECRET = os.environ.get("TEAL_API_SECRET")
+# Teal API credentials - can be from environment or hardcoded for testing
+API_KEY = os.environ.get("TEAL_API_KEY",
+                         "d78farxW274ITl1EwVaRYAhQcfhYSKIpttZBavjzA24YIm2vW7q49CIQ1Q9OGBPBfW17VeQBo9MKSCnOSgf6p1Eqg17U95D5DxCW")
+API_SECRET = os.environ.get("TEAL_API_SECRET",
+                            "2uMopWtslrELG30loy11SxmFCBbSXNnwHB5yTT3zO3ybyQHoI9bu8OONzpOwdveexWaXzvOclcJnvLffHKlP8chzG5TGVpdaoHLD")
 
-if not API_KEY or not API_SECRET:
-    raise EnvironmentError(
-        "TEAL_API_KEY and TEAL_API_SECRET environment variables must be set"
-    )
+# Supabase configuration
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://sciftjvjlpemhkvtokhi.supabase.co")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY",
+                                           "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjaWZ0anZqbHBlbWhrdnRva2hpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0OTA2MzY1MCwiZXhwIjoyMDY0NjM5NjUwfQ.qBvYsgv7HOwAbgtBxNO3AzRLmIMiTZKHpkJ3cqS1ngE")
+BATCH_ID = os.environ.get("BATCH_ID", "local")
 
+# Initialize Supabase client
+supabase: Client | None = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    print(f"Supabase client initialized for batch: {BATCH_ID}")
+else:
+    print("Warning: Supabase credentials not found. Database operations will be skipped.")
 
 BASE_URL = 'https://integrationapi.teal.global/api/v1'
 HEADERS = {
@@ -24,48 +33,15 @@ HEADERS = {
     'Content-Type': 'application/json'
 }
 
-
-def results_to_db_row(results: dict) -> dict:
-    """Map the results dictionary to DB column names."""
-    return {
-        'eid': results.get('EID'),
-        'activation_request_id': results.get('Activation Request ID'),
-        'error_message': results.get('Error'),
-        'tmo_iccid': results.get('TMO ICCID'),
-        'tmo_status': results.get('TMO Status'),
-        'tmo_timestamp': results.get('TMO Timestamp'),
-        'tmo_plan_request_id': results.get('TMO Plan Request ID'),
-        'verizon_iccid': results.get('Verizon ICCID'),
-        'verizon_status': results.get('Verizon Status'),
-        'verizon_timestamp': results.get('Verizon Timestamp'),
-        'verizon_plan_request_id': results.get('Verizon Plan Request ID'),
-        'global_iccid': results.get('Global ICCID'),
-        'global_status': results.get('Global Status'),
-        'global_timestamp': results.get('Global Timestamp'),
-        'global_plan_request_id': results.get('Global Plan Request ID'),
-        'att_iccid': results.get('ATT ICCID'),
-        'att_status': results.get('ATT Status'),
-        'att_timestamp': results.get('ATT Timestamp'),
-        'att_plan_request_id': results.get('ATT Plan Request ID'),
-    }
+# Callback URL
+CALLBACK_URL = 'https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod'
 
 
-def insert_esim_result(results: dict) -> None:
-    """Insert a row into the esim_results table tagged with the current BATCH_ID."""
-    if not BATCH_ID:
-        return
-    row = results_to_db_row(results)
-    row['batch_id'] = BATCH_ID
-    try:
-        supabase.table('esim_results').upsert(row).execute()
-    except Exception as exc:
-        print(f"Failed to insert esim_results: {exc}")
-
-
-def insert_batch_log(level: str, message: str, eid: str | None = None) -> None:
+def insert_batch_log(level: str, message: str, eid: str = None) -> None:
     """Insert a log row into batch_logs for the current batch."""
-    if not BATCH_ID:
+    if not supabase or not BATCH_ID or BATCH_ID == "local":
         return
+
     log_row = {
         'batch_id': BATCH_ID,
         'level': level,
@@ -74,13 +50,28 @@ def insert_batch_log(level: str, message: str, eid: str | None = None) -> None:
     }
     if eid:
         log_row['eid'] = eid
+
     try:
         supabase.table('batch_logs').insert(log_row).execute()
     except Exception as exc:
         print(f"Failed to insert batch log: {exc}")
 
-# Callback URL
-CALLBACK_URL = 'https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod'
+
+def update_esim_result(eid: str, data: dict) -> None:
+    """Update the esim_results table with processing status."""
+    if not supabase or not BATCH_ID or BATCH_ID == "local":
+        return
+
+    try:
+        # Always include batch_id and eid
+        data['batch_id'] = BATCH_ID
+        data['eid'] = eid
+        data['updated_at'] = datetime.datetime.utcnow().isoformat()
+
+        supabase.table('esim_results').upsert(data).execute()
+    except Exception as exc:
+        print(f"Failed to update esim_results: {exc}")
+
 
 def already_active(eid: str, plan_uuid: str) -> bool:
     """
@@ -94,7 +85,7 @@ def already_active(eid: str, plan_uuid: str) -> bool:
 
         info = get_operation_result(rid)
         if not info or not info.get("entries"):
-            return False                       # can't prove it's active – don't skip
+            return False  # can't prove it's active – don't skip
 
         cp_entries = info["entries"][0].get("connectionProfileEntries", [])
         return any(
@@ -107,9 +98,12 @@ def already_active(eid: str, plan_uuid: str) -> bool:
         print("Assuming plan is not active and proceeding with assignment...")
         return False  # If we can't check, assume it's not active
 
+
 # verify if the fallback profile is set to true or false
 def verify_fallback_profile(eid, plan_uuid, plan_name):
     print("Fetching eSIM info to confirm profile fallback lock...")
+    insert_batch_log('INFO', f"Fetching eSIM info to confirm profile fallback lock for {plan_name}", eid)
+
     info_json_fallback, info_req_id = get_esim_info(eid)
     print("Waiting 60 seconds")
     time.sleep(60)
@@ -126,11 +120,13 @@ def verify_fallback_profile(eid, plan_uuid, plan_name):
                 print(f"---> Plan '{plan_name}' fallbackProfile =", cp.get("fallbackProfile"))
                 break
 
+
 def generate_request_id():
     # Generate a UUID and remove hyphens
     request_id = str(uuid.uuid4()).replace("-", "")
     # Return the first 32 characters to meet the limit
     return request_id[:32]
+
 
 def activate_esim(eid):
     if not eid:
@@ -157,6 +153,7 @@ def activate_esim(eid):
 
     return request_id
 
+
 def get_operation_result(request_id):
     url = f'{BASE_URL}/operation-result'
     params = {'requestId': request_id}
@@ -168,6 +165,7 @@ def get_operation_result(request_id):
         raise Exception(f"Operation result API call failed with status code {response.status_code}")
     return response.json()
 
+
 def get_esim_info(eid: str, max_retries: int = 5, delay: int = 30):
     """
     Fetches eSIM info, retrying up to `max_retries` times.
@@ -177,7 +175,7 @@ def get_esim_info(eid: str, max_retries: int = 5, delay: int = 30):
     last_err = None
 
     for attempt in range(1, max_retries + 1):
-        request_id = generate_request_id()          # NEW id each try
+        request_id = generate_request_id()  # NEW id each try
         params = {
             "callbackUrl": CALLBACK_URL,
             "limit": 1,
@@ -187,11 +185,11 @@ def get_esim_info(eid: str, max_retries: int = 5, delay: int = 30):
 
         try:
             resp = requests.get(f"{BASE_URL}/esims/info",
-                                 headers=HEADERS, params=params, timeout=30)
+                                headers=HEADERS, params=params, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("success"):
-                    return data, request_id         # ← caller uses this ID
+                    return data, request_id  # ← caller uses this ID
                 last_err = "success != true"
             else:
                 last_err = f"HTTP {resp.status_code}"
@@ -204,6 +202,7 @@ def get_esim_info(eid: str, max_retries: int = 5, delay: int = 30):
 
     # all retries exhausted
     raise Exception(f"eSIM info request failed after {max_retries} attempts – {last_err}")
+
 
 def assign_plan(eid, plan_uuid, profile_lock):
     request_id = generate_request_id()
@@ -234,11 +233,13 @@ def assign_plan(eid, plan_uuid, profile_lock):
         raise Exception("Plan assignment failed: success != true")
     return request_id
 
+
 def check_device_status(eid):
     print()
     print("Requesting eSIM info to check device status...")
+    insert_batch_log('INFO', "Checking device status...", eid)
 
-    #request_id_query_status = generate_request_id()
+    # request_id_query_status = generate_request_id()
     info_json, info_request_id = get_esim_info(eid)
 
     print("Waiting for 30 seconds...")
@@ -257,6 +258,7 @@ def check_device_status(eid):
 
     if device_status != "ONLINE":
         print(f"Device status is '{device_status}'. Starting loop to check device status...")
+        insert_batch_log('WARNING', f"Device status is '{device_status}'. Waiting for ONLINE status...", eid)
         max_retries = 4
         for attempt in range(max_retries):
             print(f"Attempt {attempt + 1} of {max_retries}")
@@ -264,7 +266,7 @@ def check_device_status(eid):
 
             time.sleep(120)
 
-            #request_id_loop_status = generate_request_id()
+            # request_id_loop_status = generate_request_id()
             info_json, info_request_id = get_esim_info(eid)
 
             print("Waiting for 30 seconds...")
@@ -281,6 +283,7 @@ def check_device_status(eid):
             device_status = esim_entry.get('deviceStatus')
             if device_status == "ONLINE":
                 print("Device status is now ONLINE.")
+                insert_batch_log('INFO', "Device status is now ONLINE", eid)
                 return
             else:
                 print(f"Device status is still '{device_status}'.")
@@ -288,6 +291,7 @@ def check_device_status(eid):
             raise Exception("Device Status Error before assigning plan.")
     else:
         print("Device status is ONLINE.")
+
 
 def main():
     # Get EID from user input
@@ -297,6 +301,9 @@ def main():
         print("Error: EID must be provided.")
         sys.exit(1)
 
+    # Log start of processing
+    insert_batch_log('INFO', f"Starting processing for EID: {eid}", eid)
+
     # List of plan UUIDs (profiles)
     plans = [
         {'name': 'TMO', 'uuid': 'cda438862b284bcdaec82ee516eada14'},
@@ -305,25 +312,21 @@ def main():
         {'name': 'ATT', 'uuid': 'cd27b630772d4d8f915173488b7bfcf1'}
     ]
 
-    # Initialize results dictionary with all expected keys
-    results = {
-        'EID': eid,
-        'Activation Request ID': None,
-        'Error': None,
-    }
-
-    for plan in plans:
-        plan_name = plan['name']
-        results[f"{plan_name} ICCID"] = None
-        results[f"{plan_name} Status"] = None
-        results[f"{plan_name} Timestamp"] = None
-        results[f"{plan_name} Plan Request ID"] = None
+    # Initialize processing_started_at
+    update_esim_result(eid, {
+        'processing_started_at': datetime.datetime.utcnow().isoformat()
+    })
 
     try:
         # Activate eSIM
         request_id = activate_esim(eid)
-        results['Activation Request ID'] = request_id
         print(f"Activation initiated with request ID: {request_id}")
+        insert_batch_log('INFO', f"Activation initiated with request ID: {request_id}", eid)
+
+        # Update activation request ID in database
+        update_esim_result(eid, {
+            'activation_request_id': request_id
+        })
 
         # Poll for activation result
         print("Polling for activation result...")
@@ -331,7 +334,7 @@ def main():
         time.sleep(30)
         activation_result = None
         max_wait_time = 300  # Maximum wait time in seconds (5 minutes)
-        poll_interval = 10   # Poll every 10 seconds
+        poll_interval = 10  # Poll every 10 seconds
         elapsed_time = 0
 
         while elapsed_time < max_wait_time:
@@ -342,24 +345,22 @@ def main():
             elapsed_time += poll_interval
 
         if not activation_result or not activation_result.get('success'):
-            # --------------------------------------------------------------------------
-            #---------------------------------------------------------------------------
-            # EXIT HERE RECORD FAILURE IN THE EXCEL FILE OUTPUT WITH EID, WHERE/WHY IT FAILED, and REQUEST ID
             print("Activation failed or timed out.")
-            # Record failure in the output
-            results['Error'] = "Activation failed or timed out."
-            insert_esim_result(results)
-            insert_batch_log('ERROR', 'Activation failed or timed out.', eid)
+            error_msg = "Activation failed or timed out."
+            insert_batch_log('ERROR', error_msg, eid)
+            update_esim_result(eid, {
+                'error_message': error_msg,
+                'processing_completed_at': datetime.datetime.utcnow().isoformat()
+            })
             sys.exit(1)
-            # --------------------------------------------------------------------------
-            # --------------------------------------------------------------------------
         else:
             print("Activation request successful.")
+            insert_batch_log('INFO', "Activation request successful", eid)
 
         # Check if eSIM is active
         print("Requesting eSIM info to check if eSIM is active...")
+        insert_batch_log('INFO', "Checking if eSIM is active...", eid)
 
-        #request_id_query = generate_request_id()
         info_json, info_request_id = get_esim_info(eid)
 
         print("Waiting for 30 seconds...")
@@ -381,14 +382,14 @@ def main():
         if not esim_entry.get('active'):
             print()
             print("eSIM is not active, starting loop to check activation status...")
+            insert_batch_log('INFO', "eSIM is not active, starting activation check loop...", eid)
             max_retries = 16
             for attempt in range(max_retries):
-                print(f"Attempt {attempt+1} of {max_retries}")
+                print(f"Attempt {attempt + 1} of {max_retries}")
                 print("Waiting for 2 minutes...")
 
                 time.sleep(120)
 
-                # request_id_loop = generate_request_id()
                 info_json_loop, info_request_id_loop = get_esim_info(eid)
 
                 print("Waiting for 30 seconds...")
@@ -409,6 +410,7 @@ def main():
                 if esim_entry.get('active'):
                     print()
                     print("eSIM is now active.")
+                    insert_batch_log('INFO', "eSIM is now active", eid)
                     break
                 else:
                     print()
@@ -418,6 +420,7 @@ def main():
         else:
             print()
             print("eSIM is active.")
+            insert_batch_log('INFO', "eSIM is active", eid)
 
         # ---------------------PLAN ASSIGNMENT BELOW---------------------
 
@@ -431,18 +434,26 @@ def main():
             else:
                 profile_lock = "false"
 
-            # --- NEW : skip if the profile is already active from a previous script execution-------------
-            # ---- to make use of this section just uncomment the function on top and the below section
+            # Check if plan is already active
             if already_active(eid, plan_uuid):
                 print(f"{eid}: plan '{plan_name}' already installed - skipping")
-                results[f"{plan_name} ICCID"] = "Already active"
-                results[f"{plan_name} Status"] = "SUCCESS"
-                results[f"{plan_name} Timestamp"] = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-                continue  # jump to next plan
+                insert_batch_log('INFO', f"Plan '{plan_name}' already installed - skipping", eid)
+
+                # Update database with already active status
+                update_data = {
+                    f"{plan_name.lower()}_status": "SUCCESS",
+                    f"{plan_name.lower()}_timestamp": datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                }
+                if plan_name.lower() == 'att':
+                    update_data['att_iccid'] = "Already active"
+                else:
+                    update_data[f"{plan_name.lower()}_iccid"] = "Already active"
+
+                update_esim_result(eid, update_data)
+                continue
             else:
                 print(f"{eid}: plan '{plan_name}' not installed - proceeding with assignment")
-            # ---------------------------------------------------------------
-            # ---------------------------------------------------------------
+                insert_batch_log('INFO', f"Plan '{plan_name}' not installed - proceeding with assignment", eid)
 
             # Check that the device is ONLINE before each plan assignment
             check_device_status(eid)
@@ -453,11 +464,19 @@ def main():
             for plan_attempt in range(1, max_plan_attempts + 1):
                 print()
                 print(f"Plan assignment attempt {plan_attempt} for plan '{plan_name}'")
+                insert_batch_log('INFO', f"Plan assignment attempt {plan_attempt} for plan '{plan_name}'", eid)
 
                 # Initiate plan assignment
                 assign_plan_request_id = assign_plan(eid, plan_uuid, profile_lock)
-                results[f"{plan_name} Plan Request ID"] = assign_plan_request_id
                 print(f"Plan assignment initiated with request ID: {assign_plan_request_id}")
+
+                # Update plan request ID in database
+                update_data = {}
+                if plan_name.lower() == 'att':
+                    update_data['att_plan_request_id'] = assign_plan_request_id
+                else:
+                    update_data[f"{plan_name.lower()}_plan_request_id"] = assign_plan_request_id
+                update_esim_result(eid, update_data)
 
                 print("Waiting for 30 seconds after plan assignment API call...")
                 time.sleep(30)
@@ -473,7 +492,6 @@ def main():
 
                 # Check planChangeStatus
                 print(f"Checking planChangeStatus for '{plan_name}'...")
-                #request_id_plan_check = generate_request_id()
                 esim_info_request_result, request_id_plan_check = get_esim_info(eid)
 
                 print("Waiting for 30 seconds before retrieving plan change status...")
@@ -491,6 +509,7 @@ def main():
                 # If the status is clearly SUCCESS, we are done.
                 if plan_change_status == "SUCCESS":
                     print("Plan change status is SUCCESS.")
+                    insert_batch_log('INFO', f"Plan '{plan_name}' assigned successfully", eid)
                     plan_assignment_successful = True
                     verify_fallback_profile(eid, plan_uuid, plan_name)
                     break
@@ -500,12 +519,25 @@ def main():
                     print("Plan change status returned FAILURE.")
                     # If we're on the last attempt, exit.
                     if plan_attempt == max_plan_attempts:
-                        results['Error'] = f"Plan change FAILURE for plan '{plan_name}' after {plan_attempt} attempts."
-                        results[f"{plan_name} ICCID"] = 'N/A'
-                        results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
-                        results[f"{plan_name} Timestamp"] = 'N/A'
-                        insert_esim_result(results)
-                        insert_batch_log('ERROR', f"Plan change FAILURE for {plan_name}", eid)
+                        error_msg = f"Plan change FAILURE for plan '{plan_name}' after {plan_attempt} attempts."
+                        insert_batch_log('ERROR', error_msg, eid)
+
+                        # Update database with failure
+                        update_data = {
+                            'error_message': error_msg,
+                            'processing_completed_at': datetime.datetime.utcnow().isoformat()
+                        }
+                        if plan_name.lower() == 'att':
+                            update_data.update({
+                                'att_status': 'FAILED',
+                                'att_timestamp': datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                            })
+                        else:
+                            update_data.update({
+                                f"{plan_name.lower()}_status": 'FAILED',
+                                f"{plan_name.lower()}_timestamp": datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                            })
+                        update_esim_result(eid, update_data)
                         sys.exit(1)
                     else:
                         print("Retrying plan assignment due to FAILURE status...")
@@ -524,7 +556,6 @@ def main():
 
                         time.sleep(120)
 
-                        #request_id_nested = generate_request_id()
                         esim_info_request_result, request_id_nested = get_esim_info(eid)
                         print("Waiting for 30 seconds before nested status check...")
                         time.sleep(30)
@@ -541,6 +572,7 @@ def main():
 
                         if plan_change_status == "SUCCESS":
                             print("Plan change status is SUCCESS in nested check.")
+                            insert_batch_log('INFO', f"Plan '{plan_name}' assigned successfully in nested check", eid)
                             nested_success = True
                             plan_assignment_successful = True
                             verify_fallback_profile(eid, plan_uuid, plan_name)
@@ -561,12 +593,19 @@ def main():
 
             # If after all outer attempts the assignment is still not successful, exit with an error.
             if not plan_assignment_successful:
-                results['Error'] = f"Plan change failed or timed out for plan '{plan_name}' after {max_plan_attempts} attempts."
-                results[f"{plan_name} ICCID"] = 'N/A'
-                results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
-                results[f"{plan_name} Timestamp"] = 'N/A'
-                insert_esim_result(results)
-                insert_batch_log('ERROR', f"Plan change failed for {plan_name}", eid)
+                error_msg = f"Plan change failed or timed out for plan '{plan_name}' after {max_plan_attempts} attempts."
+                insert_batch_log('ERROR', error_msg, eid)
+
+                # Update database with failure
+                update_data = {
+                    'error_message': error_msg,
+                    'processing_completed_at': datetime.datetime.utcnow().isoformat()
+                }
+                if plan_name.lower() == 'att':
+                    update_data['att_status'] = 'FAILED'
+                else:
+                    update_data[f"{plan_name.lower()}_status"] = 'FAILED'
+                update_esim_result(eid, update_data)
                 sys.exit(1)
 
             # Upon a successful assignment, store the resulting data.
@@ -576,31 +615,53 @@ def main():
             Timestamp = last_connected_network.get('lastCdrNetworkConsumptionTime')
             if not Timestamp:
                 Timestamp = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-            results[f"{plan_name} ICCID"] = ICCID
-            results[f"{plan_name} Status"] = Status
-            results[f"{plan_name} Timestamp"] = Timestamp
 
             print(f"Plan '{plan_name}' assigned successfully:")
             print(f"ICCID: {ICCID}")
             print(f"Status: {Status}")
             print(f"Timestamp: {Timestamp}")
 
+            # Update database with successful result
+            update_data = {}
+            if plan_name.lower() == 'att':
+                update_data.update({
+                    'att_iccid': ICCID,
+                    'att_status': Status,
+                    'att_timestamp': Timestamp
+                })
+            else:
+                update_data.update({
+                    f"{plan_name.lower()}_iccid": ICCID,
+                    f"{plan_name.lower()}_status": Status,
+                    f"{plan_name.lower()}_timestamp": Timestamp
+                })
+            update_esim_result(eid, update_data)
+
         # Finish
         print()
         print("All plans assigned successfully.")
+        insert_batch_log('INFO', "All plans assigned successfully", eid)
 
-        insert_esim_result(results)
-        insert_batch_log('INFO', 'All plans assigned successfully', eid)
+        # Update processing completed timestamp and calculate duration
+        completion_time = datetime.datetime.utcnow()
+        update_esim_result(eid, {
+            'processing_completed_at': completion_time.isoformat(),
+            'status': 'SUCCESS'
+        })
 
     except Exception as e:
         print(f"Error: {e}")
+        error_msg = str(e)
+        insert_batch_log('ERROR', error_msg, eid)
 
-        # Record the error in results
-        results['Error'] = str(e)
-
-        insert_esim_result(results)
-        insert_batch_log('ERROR', str(e), eid)
+        # Update database with error
+        update_esim_result(eid, {
+            'error_message': error_msg,
+            'processing_completed_at': datetime.datetime.utcnow().isoformat(),
+            'status': 'FAILED'
+        })
         sys.exit(1)
+
 
 if __name__ == '__main__':
     main()
