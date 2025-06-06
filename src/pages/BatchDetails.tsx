@@ -46,7 +46,7 @@ const BatchDetails = () => {
     if (batch) {
       const running = batch.status === 'RUNNING';
       setIsRunning(running);
-      setIsProcessingStopped(batch.status === 'PAUSED' || batch.status === 'STOPPED');
+      setIsProcessingStopped(batch.status === 'STOPPED' || batch.status === 'PAUSED');
     }
   }, [batch]);
 
@@ -106,11 +106,11 @@ const BatchDetails = () => {
     mutationFn: async () => {
       if (!id) throw new Error('No batch ID provided');
       
-      // Update batch status to STOPPED
+      // Update batch status to FAILED to stop processing
       const { data, error } = await supabase
         .from('batches')
         .update({ 
-          status: 'STOPPED',
+          status: 'FAILED',
           updated_at: new Date().toISOString()
         })
         .eq('id', id)
@@ -409,7 +409,7 @@ const BatchDetails = () => {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Status</p>
                   <div className="flex items-center space-x-2 mt-1">
-                    <div className={`w-3 h-3 rounded-full ${batch.status === 'RUNNING' ? 'bg-blue-500 animate-pulse' : batch.status === 'STOPPED' ? 'bg-red-500' : 'bg-gray-500'}`}></div>
+                    <div className={`w-3 h-3 rounded-full ${batch.status === 'RUNNING' ? 'bg-blue-500 animate-pulse' : batch.status === 'FAILED' ? 'bg-red-500' : 'bg-gray-500'}`}></div>
                     <span className="text-xl font-bold">{batch.status}</span>
                   </div>
                 </div>
