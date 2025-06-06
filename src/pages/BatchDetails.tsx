@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -284,8 +283,8 @@ const BatchDetails = () => {
                 </Button>
               </Link>
               <div>
-                <h1 className="text-2xl font-bold">{batch.label}</h1>
-                {batch.started_at && (
+                <h1 className="text-2xl font-bold">{batch?.label}</h1>
+                {batch?.started_at && (
                   <p className="text-sm text-muted-foreground">
                     Started {new Date(batch.started_at).toLocaleString()}
                   </p>
@@ -310,10 +309,6 @@ const BatchDetails = () => {
                     Start
                   </>
                 )}
-              </Button>
-              <Button variant="outline" size="sm">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Retry Failed
               </Button>
               <Button variant="outline" size="sm">
                 <Download className="h-4 w-4 mr-2" />
