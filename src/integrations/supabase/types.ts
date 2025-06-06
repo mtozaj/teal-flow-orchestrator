@@ -201,7 +201,13 @@ export type Database = {
       }
     }
     Enums: {
-      batch_status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED"
+      batch_status:
+        | "PENDING"
+        | "RUNNING"
+        | "COMPLETED"
+        | "FAILED"
+        | "PAUSED"
+        | "STOPPED"
       log_level: "DEBUG" | "INFO" | "WARNING" | "ERROR"
     }
     CompositeTypes: {
@@ -318,7 +324,14 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      batch_status: ["PENDING", "RUNNING", "COMPLETED", "FAILED"],
+      batch_status: [
+        "PENDING",
+        "RUNNING",
+        "COMPLETED",
+        "FAILED",
+        "PAUSED",
+        "STOPPED",
+      ],
       log_level: ["DEBUG", "INFO", "WARNING", "ERROR"],
     },
   },

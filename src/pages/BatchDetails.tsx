@@ -106,11 +106,11 @@ const BatchDetails = () => {
     mutationFn: async () => {
       if (!id) throw new Error('No batch ID provided');
       
-      // Update batch status to FAILED to stop processing
+      // Update batch status to STOPPED to stop processing
       const { data, error } = await supabase
         .from('batches')
         .update({ 
-          status: 'FAILED',
+          status: 'STOPPED',
           updated_at: new Date().toISOString()
         })
         .eq('id', id)
@@ -328,7 +328,7 @@ const BatchDetails = () => {
   const getLogLevelColor = (level: string) => {
     switch (level) {
       case 'ERROR': return 'text-red-500';
-      case 'WARN': return 'text-yellow-500';
+      case 'WARNING': return 'text-yellow-500';
       case 'INFO': return 'text-blue-500';
       default: return 'text-gray-500';
     }
