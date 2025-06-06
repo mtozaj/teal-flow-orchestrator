@@ -8,51 +8,51 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ArrowLeft, Download, RefreshCw, Play, Pause, Terminal, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
 const BatchDetails = () => {
   const { id } = useParams();
-  const [logs, setLogs] = useState<Array<{ timestamp: string; level: string; eid: string; message: string }>>([]);
+  const [logs, setLogs] = useState<Array<any>>([]);
   const [isRunning, setIsRunning] = useState(true);
+  const [batchData, setBatchData] = useState<any>(null);
+  const [results, setResults] = useState<Array<any>>([]);
 
-  // Simulate real-time logs
   useEffect(() => {
-    if (!isRunning) return;
+    if (!id) return;
 
-    const interval = setInterval(() => {
-      const newLog = {
-        timestamp: new Date().toISOString(),
-        level: Math.random() > 0.8 ? 'ERROR' : 'INFO',
-        eid: `894900000000000${String(Math.floor(Math.random() * 9999)).padStart(4, '0')}`,
-        message: Math.random() > 0.8 
-          ? 'Plan assignment FAILED - Rate limit exceeded'
-          : 'Plan assignment SUCCESS'
-      };
-      setLogs(prev => [...prev.slice(-50), newLog]);
-    }, 1500);
+    supabase
+      .from('batches')
+      .select('*')
+      .eq('id', id)
+      .single()
+      .then(({ data }) => {
+        setBatchData(data);
+      });
 
-    return () => clearInterval(interval);
-  }, [isRunning]);
+    supabase
+      .from('esim_results')
+      .select('*')
+      .eq('batch_id', id)
+      .then(({ data }) => {
+        setResults(data ?? []);
+      });
 
-  const batchData = {
-    id: id || '1',
-    label: 'Production Batch #247',
-    status: 'RUNNING',
-    progress: 67,
-    total: 1250,
-    completed: 837,
-    failed: 28,
-    created: '2024-06-04T10:30:00Z',
-    started: '2024-06-04T10:32:15Z',
-    workers: 8
-  };
+    const channel = supabase
+      .channel('realtime:public:batch_logs')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'batch_logs', filter: `batch_id=eq.${id}` },
+        payload => {
+          setLogs(prev => [...prev.slice(-50), payload.new]);
+        }
+      )
+      .subscribe();
 
-  const sampleResults = [
-    { eid: '8949000000000000001', tmo: 'SUCCESS', vzn: 'SUCCESS', glb: 'PENDING', att: 'SUCCESS', timestamp: '10:35:22' },
-    { eid: '8949000000000000002', tmo: 'SUCCESS', vzn: 'FAILED', glb: 'SUCCESS', att: 'SUCCESS', timestamp: '10:35:18' },
-    { eid: '8949000000000000003', tmo: 'FAILED', vzn: 'SUCCESS', glb: 'SUCCESS', att: 'PENDING', timestamp: '10:35:15' },
-    { eid: '8949000000000000004', tmo: 'SUCCESS', vzn: 'SUCCESS', glb: 'SUCCESS', att: 'SUCCESS', timestamp: '10:35:12' },
-    { eid: '8949000000000000005', tmo: 'SUCCESS', vzn: 'SUCCESS', glb: 'FAILED', att: 'SUCCESS', timestamp: '10:35:08' },
-  ];
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]);
+
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -86,10 +86,12 @@ const BatchDetails = () => {
                 </Button>
               </Link>
               <div>
-                <h1 className="text-2xl font-bold">{batchData.label}</h1>
-                <p className="text-sm text-muted-foreground">
-                  Started {new Date(batchData.started).toLocaleString()}
-                </p>
+                <h1 className="text-2xl font-bold">{batchData?.label}</h1>
+                {batchData?.started && (
+                  <p className="text-sm text-muted-foreground">
+                    Started {new Date(batchData.started).toLocaleString()}
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex items-center space-x-2">
@@ -146,10 +148,10 @@ const BatchDetails = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Progress</p>
-                  <p className="text-xl font-bold">{batchData.completed}/{batchData.total}</p>
-                  <Progress value={batchData.progress} className="h-2 mt-2" />
+                  <p className="text-xl font-bold">{batchData?.completed ?? 0}/{batchData?.total ?? 0}</p>
+                  <Progress value={batchData?.progress ?? 0} className="h-2 mt-2" />
                 </div>
-                <span className="text-2xl font-bold text-blue-600">{batchData.progress}%</span>
+                <span className="text-2xl font-bold text-blue-600">{batchData?.progress ?? 0}%</span>
               </div>
             </CardContent>
           </Card>
@@ -160,12 +162,14 @@ const BatchDetails = () => {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Success Rate</p>
                   <p className="text-2xl font-bold text-green-600">
-                    {((batchData.completed - batchData.failed) / batchData.completed * 100).toFixed(1)}%
+                    {batchData && batchData.completed
+                      ? (((batchData.completed - batchData.failed) / batchData.completed) * 100).toFixed(1)
+                      : '0'}%
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm text-green-600">✅ {batchData.completed - batchData.failed}</p>
-                  <p className="text-sm text-red-600">❌ {batchData.failed}</p>
+                  <p className="text-sm text-green-600">✅ {batchData ? batchData.completed - batchData.failed : 0}</p>
+                  <p className="text-sm text-red-600">❌ {batchData?.failed ?? 0}</p>
                 </div>
               </div>
             </CardContent>
@@ -176,7 +180,7 @@ const BatchDetails = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Workers</p>
-                  <p className="text-2xl font-bold text-purple-600">{batchData.workers}</p>
+                  <p className="text-2xl font-bold text-purple-600">{batchData?.workers ?? 0}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-muted-foreground">Active</p>
@@ -216,7 +220,7 @@ const BatchDetails = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {sampleResults.map((result, index) => (
+                      {results.map((result, index) => (
                         <tr key={index} className="border-b hover:bg-muted/50">
                           <td className="p-2 font-mono text-sm">{result.eid}</td>
                           <td className="p-2 text-center">

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,40 +7,22 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, Activity, Clock, CheckCircle, AlertCircle, Play, Settings, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
 const Dashboard = () => {
-  const [recentBatches] = useState([
-    {
-      id: '1',
-      label: 'Production Batch #247',
-      status: 'RUNNING',
-      progress: 65,
-      total: 1250,
-      completed: 812,
-      failed: 23,
-      created: '2024-06-04T10:30:00Z'
-    },
-    {
-      id: '2',
-      label: 'Test Deployment EU',
-      status: 'DONE',
-      progress: 100,
-      total: 500,
-      completed: 487,
-      failed: 13,
-      created: '2024-06-04T08:15:00Z'
-    },
-    {
-      id: '3',
-      label: 'Emergency Activation',
-      status: 'FAILED',
-      progress: 34,
-      total: 200,
-      completed: 45,
-      failed: 23,
-      created: '2024-06-04T07:45:00Z'
-    }
-  ]);
+  const [recentBatches, setRecentBatches] = useState<Array<any>>([]);
+
+  useEffect(() => {
+    supabase
+      .from('batches')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (data) {
+          setRecentBatches(data as any[]);
+        }
+      });
+  }, []);
 
   const getStatusColor = (status: string) => {
     switch (status) {

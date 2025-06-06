@@ -6,8 +6,15 @@ import sys
 import os
 import pandas as pd
 
-API_KEY = "d78far6ZuKvKp6G6K9hXyu3KXfo6843XSx7jFWNC01nztJi2kxMti6jCncGNO533bTZhsTW5wWqnvlKCvfQnxrygmCGHWjRLi3eY"
-API_SECRET = "SJyHaTyIk6fIe43dLAkM5TlKPJsjoiOJwY86L3avIu4UZ0GEmoKHcuGYtoGh1wfLQAhpPPnTAyAeOZruZ9QYoJ3IWxFR2GQuh0t5"
+# Teal API credentials should be provided via environment variables so they can
+# be set dynamically without modifying the code.
+API_KEY = os.environ.get("TEAL_API_KEY")
+API_SECRET = os.environ.get("TEAL_API_SECRET")
+
+if not API_KEY or not API_SECRET:
+    raise EnvironmentError(
+        "TEAL_API_KEY and TEAL_API_SECRET environment variables must be set"
+    )
 
 BASE_URL = 'https://integrationapi.teal.global/api/v1'
 HEADERS = {
