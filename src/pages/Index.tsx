@@ -8,50 +8,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, Activity, Clock, CheckCircle, AlertCircle, Play, Settings, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { useQuery } from '@tanstack/react-query';
-import { useAnalytics } from '@/hooks/useAnalytics';
-import { Analytics } from '@/components/Analytics';
 
 const Dashboard = () => {
-  const { stats } = useAnalytics();
+  const [recentBatches, setRecentBatches] = useState<Array<any>>([]);
 
-  const { data: recentBatches = [], isLoading } = useQuery({
-    queryKey: ['batches'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('batches')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      
-      if (error) throw error;
-      return data.map(batch => ({
-        ...batch,
-        progress: batch.total_eids > 0 ? Math.round((batch.processed_eids / batch.total_eids) * 100) : 0,
-        completed: batch.processed_eids,
-        total: batch.total_eids,
-        failed: batch.failure_count
-      }));
-    },
-    refetchInterval: 3000 // Refetch every 3 seconds for live updates
-  });
-
-  // Set up real-time subscription for batches
   useEffect(() => {
-    const channel = supabase
-      .channel('batches-realtime')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'batches' },
-        () => {
-          // Trigger refetch when batches change
-          console.log('Batch data updated - refreshing...');
+    supabase
+      .from('batches')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (data) {
+          setRecentBatches(data as any[]);
         }
-      )
-      .subscribe();
+      });
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
   const getStatusColor = (status: string) => {

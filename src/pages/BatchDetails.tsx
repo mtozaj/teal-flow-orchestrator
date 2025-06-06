@@ -1,17 +1,13 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Label } from '@/components/ui/label';
-import { ArrowLeft, Activity, Clock, CheckCircle, AlertCircle, Play, Pause, Download, Terminal } from 'lucide-react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Download, RefreshCw, Play, Pause, Terminal, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
 
 const BatchDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -238,18 +234,12 @@ const BatchDetails = () => {
     if (!id) return;
 
     const channel = supabase
-      .channel(`batch-updates-${id}`)
+      .channel('realtime:public:batch_logs')
       .on(
         'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'batches',
-          filter: `id=eq.${id}`,
-        },
-        () => {
-          console.log('Batch updated, invalidating queries');
-          queryClient.invalidateQueries({ queryKey: ['batch', id] });
+        { event: 'INSERT', schema: 'public', table: 'batch_logs', filter: `batch_id=eq.${id}` },
+        payload => {
+          setLogs(prev => [...prev.slice(-50), payload.new]);
         }
       )
       .subscribe();
@@ -257,284 +247,233 @@ const BatchDetails = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [id, queryClient]);
+  }, [id]);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'PENDING':
-        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
-      case 'RUNNING':
-        return <Badge variant="default" className="bg-blue-600"><Activity className="h-3 w-3 mr-1" />Running</Badge>;
-      case 'COMPLETED':
-        return <Badge variant="default" className="bg-green-600"><CheckCircle className="h-3 w-3 mr-1" />Completed</Badge>;
-      case 'FAILED':
-        return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Failed</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
+      case 'SUCCESS': return 'bg-green-500 text-white';
+      case 'FAILED': return 'bg-red-500 text-white';
+      case 'PENDING': return 'bg-yellow-500 text-white';
+      default: return 'bg-gray-500 text-white';
     }
   };
 
-  if (batchLoading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-        <div className="container mx-auto px-6 py-8">
-          <div className="text-center py-12">Loading batch details...</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!batch) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 flex items-center justify-center">
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-muted-foreground">Batch not found</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  // Calculate progress percentage only after batch is loaded
-  const progressPercentage = batch.total_eids > 0 ? (batch.processed_eids / batch.total_eids) * 100 : 0;
+  const getLogLevelColor = (level: string) => {
+    switch (level) {
+      case 'ERROR': return 'text-red-500';
+      case 'WARN': return 'text-yellow-500';
+      case 'INFO': return 'text-blue-500';
+      default: return 'text-gray-500';
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       {/* Header */}
-      <header className="border-b bg-white/80 backdrop-blur-sm dark:bg-slate-900/80">
+      <header className="border-b bg-white/80 backdrop-blur-sm dark:bg-slate-900/80 sticky top-0 z-50">
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <Link to="/">
                 <Button variant="outline" size="sm">
                   <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back to Batches
+                  Back
                 </Button>
               </Link>
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                  <Activity className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold">{batch.label}</h1>
-                  <p className="text-sm text-muted-foreground">Batch ID: {batch.id}</p>
-                </div>
+              <div>
+                <h1 className="text-2xl font-bold">{batchData?.label}</h1>
+                {batchData?.started && (
+                  <p className="text-sm text-muted-foreground">
+                    Started {new Date(batchData.started).toLocaleString()}
+                  </p>
+                )}
               </div>
             </div>
-            <div className="flex items-center space-x-4">
-              {getStatusBadge(batch.status)}
-              {batch.status === 'RUNNING' && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={handlePauseBatch}
-                  disabled={pauseBatchMutation.isPending}
-                >
-                  <Pause className="h-4 w-4 mr-2" />
-                  {pauseBatchMutation.isPending ? 'Pausing...' : 'Pause'}
-                </Button>
-              )}
-              {batch.status === 'PENDING' && (
-                <Button 
-                  variant="default" 
-                  size="sm"
-                  onClick={handleStartBatch}
-                  disabled={startBatchMutation.isPending}
-                >
-                  <Play className="h-4 w-4 mr-2" />
-                  {startBatchMutation.isPending ? 'Starting...' : 'Start'}
-                </Button>
-              )}
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsRunning(!isRunning)}
+              >
+                {isRunning ? (
+                  <>
+                    <Pause className="h-4 w-4 mr-2" />
+                    Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" />
+                    Resume
+                  </>
+                )}
+              </Button>
+              <Button variant="outline" size="sm">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Retry Failed
+              </Button>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="container mx-auto px-6 py-8 max-w-6xl">
-        {/* Progress Overview */}
+      <div className="container mx-auto px-6 py-8">
+        {/* Status Overview */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Total EIDs</CardDescription>
-              <CardTitle className="text-3xl">{batch.total_eids}</CardTitle>
-            </CardHeader>
+          <Card className="border-0 shadow-md bg-white/70 backdrop-blur-sm dark:bg-slate-800/70">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <div className="flex items-center space-x-2 mt-1">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                    <span className="text-xl font-bold">RUNNING</span>
+                  </div>
+                </div>
+                <CheckCircle className="h-8 w-8 text-blue-500" />
+              </div>
+            </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Processed</CardDescription>
-              <CardTitle className="text-3xl">{batch.processed_eids}</CardTitle>
-            </CardHeader>
+
+          <Card className="border-0 shadow-md bg-white/70 backdrop-blur-sm dark:bg-slate-800/70">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Progress</p>
+                  <p className="text-xl font-bold">{batchData?.completed ?? 0}/{batchData?.total ?? 0}</p>
+                  <Progress value={batchData?.progress ?? 0} className="h-2 mt-2" />
+                </div>
+                <span className="text-2xl font-bold text-blue-600">{batchData?.progress ?? 0}%</span>
+              </div>
+            </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Success</CardDescription>
-              <CardTitle className="text-3xl text-green-600">{batch.success_count}</CardTitle>
-            </CardHeader>
+
+          <Card className="border-0 shadow-md bg-white/70 backdrop-blur-sm dark:bg-slate-800/70">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Success Rate</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {batchData && batchData.completed
+                      ? (((batchData.completed - batchData.failed) / batchData.completed) * 100).toFixed(1)
+                      : '0'}%
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-green-600">✅ {batchData ? batchData.completed - batchData.failed : 0}</p>
+                  <p className="text-sm text-red-600">❌ {batchData?.failed ?? 0}</p>
+                </div>
+              </div>
+            </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Failures</CardDescription>
-              <CardTitle className="text-3xl text-red-600">{batch.failure_count}</CardTitle>
-            </CardHeader>
+
+          <Card className="border-0 shadow-md bg-white/70 backdrop-blur-sm dark:bg-slate-800/70">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Workers</p>
+                  <p className="text-2xl font-bold text-purple-600">{batchData?.workers ?? 0}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">Active</p>
+                  <p className="text-sm text-purple-600">~2.4 EIDs/sec</p>
+                </div>
+              </div>
+            </CardContent>
           </Card>
         </div>
 
-        {/* Progress Bar */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>Processing Progress</CardTitle>
-            <CardDescription>
-              {batch.processed_eids} of {batch.total_eids} EIDs processed ({progressPercentage.toFixed(1)}%)
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Progress value={progressPercentage} className="h-2" />
-          </CardContent>
-        </Card>
-
-        <Tabs defaultValue="terminal" className="space-y-6">
-          <TabsList className="grid grid-cols-3 w-full">
-            <TabsTrigger value="terminal">Live Terminal</TabsTrigger>
+        {/* Main Content */}
+        <Tabs defaultValue="results" className="space-y-6">
+          <TabsList className="grid grid-cols-2 w-[400px] mx-auto">
             <TabsTrigger value="results">Results</TabsTrigger>
-            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="logs">Live Logs</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="terminal">
-            <Card className="border-0 shadow-lg bg-black text-green-400 font-mono">
-              <CardHeader className="bg-gray-900 text-white">
-                <CardTitle className="flex items-center space-x-2">
-                  <Terminal className="h-5 w-5" />
-                  <span>Live Terminal Output</span>
-                  <Badge variant="outline" className="ml-auto">
-                    {liveLogs.length} logs
-                  </Badge>
-                </CardTitle>
-                <CardDescription className="text-gray-300">
-                  Real-time processing logs and output
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ScrollArea className="h-96 p-4">
-                  {liveLogs.length === 0 ? (
-                    <div className="text-gray-500 text-center py-8">
-                      No logs yet. Logs will appear here when processing starts.
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {liveLogs.map((log, index) => (
-                        <div key={log.id || index} className="text-sm">
-                          <span className="text-gray-400">
-                            [{new Date(log.timestamp).toLocaleTimeString()}]
-                          </span>
-                          <span className={`ml-2 ${
-                            log.level === 'ERROR' ? 'text-red-400' : 
-                            log.level === 'WARN' ? 'text-yellow-400' : 
-                            'text-green-400'
-                          }`}>
-                            [{log.level}]
-                          </span>
-                          {log.eid && (
-                            <span className="text-blue-400 ml-2">[{log.eid}]</span>
-                          )}
-                          <span className="ml-2">{log.message}</span>
-                        </div>
-                      ))}
-                      <div ref={logsEndRef} />
-                    </div>
-                  )}
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="results">
+          <TabsContent value="results" className="space-y-4">
             <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
               <CardHeader>
-                <CardTitle>eSIM Processing Results</CardTitle>
+                <CardTitle>EID Processing Results</CardTitle>
                 <CardDescription>
-                  Detailed results for each EID in this batch
+                  Real-time status of each EID across all carriers
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {resultsLoading ? (
-                  <div className="text-center py-8">Loading results...</div>
-                ) : esimResults.length === 0 ? (
-                  <div className="text-center py-8">No results found</div>
-                ) : (
-                  <ScrollArea className="h-[400px]">
-                    <div className="space-y-4">
-                      {esimResults.map((result) => (
-                        <div key={result.id} className="border rounded-lg p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-mono text-sm">{result.eid}</span>
-                            <div className="flex space-x-2">
-                              {result.att_status && (
-                                <Badge variant="outline" className="text-xs">
-                                  AT&T: {result.att_status}
-                                </Badge>
-                              )}
-                              {result.tmo_status && (
-                                <Badge variant="outline" className="text-xs">
-                                  T-Mobile: {result.tmo_status}
-                                </Badge>
-                              )}
-                              {result.verizon_status && (
-                                <Badge variant="outline" className="text-xs">
-                                  Verizon: {result.verizon_status}
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                          {result.error_message && (
-                            <div className="text-sm text-red-600 bg-red-50 dark:bg-red-900/20 p-2 rounded">
-                              {result.error_message}
-                            </div>
-                          )}
-                        </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left p-2 font-semibold">EID</th>
+                        <th className="text-center p-2 font-semibold">T-Mobile</th>
+                        <th className="text-center p-2 font-semibold">Verizon</th>
+                        <th className="text-center p-2 font-semibold">Global</th>
+                        <th className="text-center p-2 font-semibold">AT&T</th>
+                        <th className="text-right p-2 font-semibold">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map((result, index) => (
+                        <tr key={index} className="border-b hover:bg-muted/50">
+                          <td className="p-2 font-mono text-sm">{result.eid}</td>
+                          <td className="p-2 text-center">
+                            <Badge className={`text-xs ${getStatusColor(result.tmo)}`}>
+                              {result.tmo}
+                            </Badge>
+                          </td>
+                          <td className="p-2 text-center">
+                            <Badge className={`text-xs ${getStatusColor(result.vzn)}`}>
+                              {result.vzn}
+                            </Badge>
+                          </td>
+                          <td className="p-2 text-center">
+                            <Badge className={`text-xs ${getStatusColor(result.glb)}`}>
+                              {result.glb}
+                            </Badge>
+                          </td>
+                          <td className="p-2 text-center">
+                            <Badge className={`text-xs ${getStatusColor(result.att)}`}>
+                              {result.att}
+                            </Badge>
+                          </td>
+                          <td className="p-2 text-right text-sm text-muted-foreground">
+                            {result.timestamp}
+                          </td>
+                        </tr>
                       ))}
-                    </div>
-                  </ScrollArea>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="details">
-            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
-              <CardHeader>
-                <CardTitle>Batch Configuration</CardTitle>
-                <CardDescription>
-                  Settings and parameters for this batch
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <Label className="text-sm font-medium">Batch Label</Label>
-                    <p className="text-lg">{batch.label}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Max Parallelism</Label>
-                    <p className="text-lg">{batch.max_parallelism} workers</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Total EIDs</Label>
-                    <p className="text-lg">{batch.total_eids}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">File Path</Label>
-                    <p className="text-lg font-mono text-sm">{batch.file_path || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Created At</Label>
-                    <p className="text-lg">{new Date(batch.created_at).toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Last Updated</Label>
-                    <p className="text-lg">{new Date(batch.updated_at).toLocaleString()}</p>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="logs" className="space-y-4">
+            <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
+              <CardHeader>
+                <CardTitle>Live Processing Logs</CardTitle>
+                <CardDescription>
+                  Real-time output from worker processes
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[600px] rounded-md border p-4 bg-slate-950">
+                  <div className="space-y-1 font-mono text-sm">
+                    {logs.map((log, index) => (
+                      <div key={index} className="text-slate-300">
+                        <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                        {' '}
+                        <span className={getLogLevelColor(log.level)}>[{log.level}]</span>
+                        {' '}
+                        <span className="text-blue-400">[{log.eid}]</span>
+                        {' '}
+                        <span>{log.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
               </CardContent>
             </Card>
           </TabsContent>

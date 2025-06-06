@@ -64,6 +64,24 @@ This project is built with:
 
 Simply open [Lovable](https://lovable.dev/projects/a7b3f998-1962-45f2-a205-ba377f31dd25) and click on Share -> Publish.
 
+## Environment configuration
+
+Create a `.env` file at the project root (see `.env.example`) and provide your
+Supabase and Teal credentials:
+
+```
+SUPABASE_URL=your-supabase-url
+VITE_SUPABASE_URL=your-supabase-url
+VITE_SUPABASE_ANON_KEY=public-anon-key
+SUPABASE_SERVICE_ROLE_KEY=service-role-key
+TEAL_API_KEY=your-teal-api-key
+TEAL_API_SECRET=your-teal-api-secret
+```
+
+The front-end uses the `VITE_` prefixed variables while the Python workers read
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TEAL_API_KEY` and
+`TEAL_API_SECRET`.
+
 ## Can I connect a custom domain to my Lovable project?
 
 Yes, you can!

@@ -6,14 +6,16 @@ import sys
 import os
 from supabase import create_client, Client
 
+# Teal API credentials should be provided via environment variables so they can
+# be set dynamically without modifying the code.
 API_KEY = os.environ.get("TEAL_API_KEY")
 API_SECRET = os.environ.get("TEAL_API_SECRET")
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-BATCH_ID = os.environ.get("BATCH_ID")
+if not API_KEY or not API_SECRET:
+    raise EnvironmentError(
+        "TEAL_API_KEY and TEAL_API_SECRET environment variables must be set"
+    )
 
-supabase: Client = create_client(SUPABASE_URL or "", SUPABASE_SERVICE_ROLE_KEY or "")
 
 BASE_URL = 'https://integrationapi.teal.global/api/v1'
 HEADERS = {
