@@ -202,6 +202,23 @@ const BatchDetails = () => {
 
     fetchInitialLogs();
 
+    const fetchLatestLogs = async () => {
+      if (!lastTimestampRef.current) return;
+      const { data, error } = await supabase
+        .from('batch_logs')
+        .select('*')
+        .eq('batch_id', id)
+        .gt('timestamp', lastTimestampRef.current)
+        .order('timestamp', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        lastTimestampRef.current = data[data.length - 1].timestamp;
+        setLiveLogs(prev => [...prev, ...data]);
+      }
+    };
+
+    let intervalId: NodeJS.Timeout | null = null;
+
     // Only set up real-time subscription if not stopped
     if (!isProcessingStopped) {
       const channel = supabase
@@ -226,11 +243,16 @@ const BatchDetails = () => {
 
       subscriptionRef.current = channel;
 
+      intervalId = setInterval(fetchLatestLogs, 1000);
+
       return () => {
         console.log('Cleaning up subscription');
         if (subscriptionRef.current) {
           supabase.removeChannel(subscriptionRef.current);
           subscriptionRef.current = null;
+        }
+        if (intervalId) {
+          clearInterval(intervalId);
         }
       };
     }
@@ -239,6 +261,9 @@ const BatchDetails = () => {
       if (subscriptionRef.current) {
         supabase.removeChannel(subscriptionRef.current);
         subscriptionRef.current = null;
+      }
+      if (intervalId) {
+        clearInterval(intervalId);
       }
     };
   }, [id, isProcessingStopped]);
