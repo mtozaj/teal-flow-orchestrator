@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,6 +16,7 @@ const BatchDetails = () => {
   const [liveLogs, setLiveLogs] = useState<any[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isProcessingStopped, setIsProcessingStopped] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const lastTimestampRef = useRef<string | null>(null);
   const subscriptionRef = useRef<any>(null);
@@ -183,6 +183,7 @@ const BatchDetails = () => {
 
     const fetchInitialLogs = async () => {
       console.log('Fetching initial logs...');
+      setLogsLoading(true);
       const { data, error } = await supabase
         .from('batch_logs')
         .select('*')
@@ -195,33 +196,47 @@ const BatchDetails = () => {
         console.log('Initial logs fetched:', data?.length || 0);
         if (data && data.length > 0) {
           lastTimestampRef.current = data[data.length - 1].timestamp;
+          setLiveLogs(data);
+        } else {
+          // Set a default timestamp to enable polling even when no logs exist yet
+          lastTimestampRef.current = new Date().toISOString();
+          setLiveLogs([]);
         }
-        setLiveLogs(data || []);
       }
+      setLogsLoading(false);
     };
 
+    // Always fetch initial logs
     fetchInitialLogs();
 
     const fetchLatestLogs = async () => {
-      if (!lastTimestampRef.current) return;
+      // Always try to fetch logs, even if lastTimestampRef is not set
       const { data, error } = await supabase
         .from('batch_logs')
         .select('*')
         .eq('batch_id', id)
-        .gt('timestamp', lastTimestampRef.current)
+        .gt('timestamp', lastTimestampRef.current || new Date(0).toISOString())
         .order('timestamp', { ascending: true });
 
       if (!error && data && data.length > 0) {
+        console.log(`Fetched ${data.length} new logs`);
         lastTimestampRef.current = data[data.length - 1].timestamp;
-        setLiveLogs(prev => [...prev, ...data]);
+        setLiveLogs(prev => {
+          // Deduplicate logs based on ID to prevent duplicates
+          const existingIds = new Set(prev.map(log => log.id));
+          const newLogs = data.filter(log => !existingIds.has(log.id));
+          return [...prev, ...newLogs];
+        });
       }
     };
 
     let intervalId: NodeJS.Timeout | null = null;
+    let realTimeChannel: any = null;
 
-    // Only set up real-time subscription if not stopped
-    if (!isProcessingStopped) {
-      const channel = supabase
+    // Set up real-time subscription and polling
+    const setupRealtimeAndPolling = () => {
+      // Set up real-time subscription
+      realTimeChannel = supabase
         .channel(`batch-logs-${id}`)
         .on(
           'postgres_changes',
@@ -232,32 +247,42 @@ const BatchDetails = () => {
             filter: `batch_id=eq.${id}`,
           },
           (payload) => {
-            console.log('New log received:', payload.new);
-            lastTimestampRef.current = payload.new.timestamp;
-            setLiveLogs(prev => [...prev, payload.new]);
+            console.log('New log received via real-time:', payload.new);
+            if (payload.new) {
+              lastTimestampRef.current = payload.new.timestamp;
+              setLiveLogs(prev => {
+                // Check if log already exists to prevent duplicates
+                const exists = prev.some(log => log.id === payload.new.id);
+                if (!exists) {
+                  return [...prev, payload.new];
+                }
+                return prev;
+              });
+            }
           }
         )
         .subscribe((status) => {
           console.log('Subscription status:', status);
+          if (status === 'SUBSCRIBED') {
+            // Start polling as a fallback mechanism
+            // Using shorter interval for more responsive updates
+            intervalId = setInterval(fetchLatestLogs, 500);
+            
+            // Also do an immediate poll after subscription
+            fetchLatestLogs();
+          }
         });
 
-      subscriptionRef.current = channel;
+      subscriptionRef.current = realTimeChannel;
+    };
 
-      intervalId = setInterval(fetchLatestLogs, 1000);
-
-      return () => {
-        console.log('Cleaning up subscription');
-        if (subscriptionRef.current) {
-          supabase.removeChannel(subscriptionRef.current);
-          subscriptionRef.current = null;
-        }
-        if (intervalId) {
-          clearInterval(intervalId);
-        }
-      };
+    // Only set up real-time and polling if not stopped
+    if (!isProcessingStopped) {
+      setupRealtimeAndPolling();
     }
 
     return () => {
+      console.log('Cleaning up logs subscription');
       if (subscriptionRef.current) {
         supabase.removeChannel(subscriptionRef.current);
         subscriptionRef.current = null;
@@ -562,17 +587,34 @@ const BatchDetails = () => {
               <CardContent>
                 <ScrollArea className="h-[600px] rounded-md border p-4 bg-slate-950">
                   <div className="space-y-1 font-mono text-sm">
-                    {liveLogs.map((log, index) => (
-                      <div key={index} className="text-slate-300">
-                        <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                        {' '}
-                        <span className={getLogLevelColor(log.level)}>[{log.level}]</span>
-                        {' '}
-                        {log.eid && <span className="text-blue-400">[{log.eid}]</span>}
-                        {' '}
-                        <span>{log.message}</span>
+                    {logsLoading ? (
+                      <div className="text-slate-400 text-center py-8">
+                        <div className="animate-pulse">Loading logs...</div>
                       </div>
-                    ))}
+                    ) : liveLogs.length === 0 ? (
+                      <div className="text-slate-400 text-center py-8">
+                        {isRunning ? (
+                          <div className="space-y-2">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-400 mx-auto"></div>
+                            <p>Waiting for logs...</p>
+                          </div>
+                        ) : (
+                          <p>No logs yet. Click "Start" to begin processing.</p>
+                        )}
+                      </div>
+                    ) : (
+                      liveLogs.map((log, index) => (
+                        <div key={log.id || index} className="text-slate-300">
+                          <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                          {' '}
+                          <span className={getLogLevelColor(log.level)}>[{log.level}]</span>
+                          {' '}
+                          {log.eid && <span className="text-blue-400">[{log.eid}]</span>}
+                          {' '}
+                          <span>{log.message}</span>
+                        </div>
+                      ))
+                    )}
                     <div ref={logsEndRef} />
                   </div>
                 </ScrollArea>
