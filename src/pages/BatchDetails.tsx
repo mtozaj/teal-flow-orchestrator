@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -5,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ArrowLeft, Download, RefreshCw, Play, Pause, Terminal, CheckCircle, AlertCircle, Clock } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, Play, Pause, Terminal, CheckCircle, AlertCircle, Clock, Square } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
@@ -15,8 +16,10 @@ const BatchDetails = () => {
   const { id } = useParams<{ id: string }>();
   const [liveLogs, setLiveLogs] = useState<any[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isProcessingStopped, setIsProcessingStopped] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const lastTimestampRef = useRef<string | null>(null);
+  const subscriptionRef = useRef<any>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -34,17 +37,20 @@ const BatchDetails = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!id
+    enabled: !!id,
+    refetchInterval: 2000 // Refetch every 2 seconds to get latest status
   });
 
   // Set isRunning based on batch status
   useEffect(() => {
     if (batch) {
-      setIsRunning(batch.status === 'RUNNING');
+      const running = batch.status === 'RUNNING';
+      setIsRunning(running);
+      setIsProcessingStopped(batch.status === 'PAUSED' || batch.status === 'STOPPED');
     }
   }, [batch]);
 
-  // Mutation to start batch processing with API keys
+  // Mutation to start batch processing
   const startBatchMutation = useMutation({
     mutationFn: async () => {
       if (!id) throw new Error('No batch ID provided');
@@ -82,7 +88,7 @@ const BatchDetails = () => {
     onSuccess: () => {
       toast({
         title: "Batch Processing Started",
-        description: "The batch processing has been initiated successfully using your API credentials.",
+        description: "The batch processing has been initiated successfully.",
       });
       queryClient.invalidateQueries({ queryKey: ['batch', id] });
     },
@@ -95,15 +101,16 @@ const BatchDetails = () => {
     }
   });
 
-  // Mutation to pause batch processing
-  const pauseBatchMutation = useMutation({
+  // Mutation to stop batch processing
+  const stopBatchMutation = useMutation({
     mutationFn: async () => {
       if (!id) throw new Error('No batch ID provided');
       
+      // Update batch status to STOPPED
       const { data, error } = await supabase
         .from('batches')
         .update({ 
-          status: 'PENDING',
+          status: 'STOPPED',
           updated_at: new Date().toISOString()
         })
         .eq('id', id)
@@ -111,30 +118,43 @@ const BatchDetails = () => {
         .single();
       
       if (error) throw error;
+      
+      // Log the stop action
+      await supabase
+        .from('batch_logs')
+        .insert({
+          batch_id: id,
+          level: 'INFO',
+          message: 'Batch processing stopped by user',
+          timestamp: new Date().toISOString()
+        });
+      
       return data;
     },
     onSuccess: () => {
       toast({
-        title: "Batch Paused",
-        description: "The batch processing has been paused.",
+        title: "Batch Stopped",
+        description: "The batch processing has been stopped.",
       });
+      setIsProcessingStopped(true);
       queryClient.invalidateQueries({ queryKey: ['batch', id] });
     },
     onError: (error) => {
       toast({
-        title: "Error Pausing Batch",
-        description: error instanceof Error ? error.message : "Failed to pause batch processing.",
+        title: "Error Stopping Batch",
+        description: error instanceof Error ? error.message : "Failed to stop batch processing.",
         variant: "destructive",
       });
     }
   });
 
   const handleStartBatch = () => {
+    setIsProcessingStopped(false);
     startBatchMutation.mutate();
   };
 
-  const handlePauseBatch = () => {
-    pauseBatchMutation.mutate();
+  const handleStopBatch = () => {
+    stopBatchMutation.mutate();
   };
 
   const { data: esimResults = [], isLoading: resultsLoading } = useQuery({
@@ -151,10 +171,11 @@ const BatchDetails = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!id
+    enabled: !!id,
+    refetchInterval: isRunning ? 5000 : false // Only refetch when running
   });
 
-  // Real-time logs subscription with polling fallback
+  // Real-time logs subscription
   useEffect(() => {
     if (!id) return;
 
@@ -181,63 +202,119 @@ const BatchDetails = () => {
 
     fetchInitialLogs();
 
-    // Set up real-time subscription
-    const channel = supabase
-      .channel(`batch-logs-${id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'batch_logs',
-          filter: `batch_id=eq.${id}`,
-        },
-        (payload) => {
-          console.log('New log received:', payload.new);
-          lastTimestampRef.current = payload.new.timestamp;
-          setLiveLogs(prev => [...prev, payload.new]);
-        }
-      )
-      .subscribe((status) => {
-        console.log('Subscription status:', status);
-      });
-
-    // Poll for new logs in case realtime fails
-    const pollInterval = setInterval(async () => {
-      const since = lastTimestampRef.current || '1970-01-01T00:00:00Z';
-      const { data, error } = await supabase
-        .from('batch_logs')
-        .select('*')
-        .eq('batch_id', id)
-        .gt('timestamp', since)
-        .order('timestamp', { ascending: true });
-
-      if (error) {
-        console.error('Polling logs error:', error);
-        return;
-      }
-
-      if (data && data.length > 0) {
-        lastTimestampRef.current = data[data.length - 1].timestamp;
-        setLiveLogs(prev => {
-          const existingIds = new Set(prev.map(l => l.id));
-          const newLogs = data.filter(l => !existingIds.has(l.id));
-          return [...prev, ...newLogs];
+    // Only set up real-time subscription if not stopped
+    if (!isProcessingStopped) {
+      const channel = supabase
+        .channel(`batch-logs-${id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'batch_logs',
+            filter: `batch_id=eq.${id}`,
+          },
+          (payload) => {
+            console.log('New log received:', payload.new);
+            lastTimestampRef.current = payload.new.timestamp;
+            setLiveLogs(prev => [...prev, payload.new]);
+          }
+        )
+        .subscribe((status) => {
+          console.log('Subscription status:', status);
         });
-      }
-    }, 5000);
+
+      subscriptionRef.current = channel;
+
+      return () => {
+        console.log('Cleaning up subscription');
+        if (subscriptionRef.current) {
+          supabase.removeChannel(subscriptionRef.current);
+          subscriptionRef.current = null;
+        }
+      };
+    }
 
     return () => {
-      console.log('Cleaning up subscription');
-      supabase.removeChannel(channel);
-      clearInterval(pollInterval);
+      if (subscriptionRef.current) {
+        supabase.removeChannel(subscriptionRef.current);
+        subscriptionRef.current = null;
+      }
     };
-  }, [id]);
+  }, [id, isProcessingStopped]);
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [liveLogs]);
+
+  // Export CSV functionality
+  const handleExportCSV = () => {
+    if (!esimResults.length) {
+      toast({
+        title: "No Data to Export",
+        description: "There are no results to export yet.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const headers = [
+      'EID',
+      'T-Mobile Status',
+      'T-Mobile ICCID',
+      'T-Mobile Timestamp',
+      'Verizon Status',
+      'Verizon ICCID', 
+      'Verizon Timestamp',
+      'Global Status',
+      'Global ICCID',
+      'Global Timestamp',
+      'AT&T Status',
+      'AT&T ICCID',
+      'AT&T Timestamp',
+      'Processing Duration (seconds)',
+      'Error Message',
+      'Created At'
+    ];
+
+    const csvContent = [
+      headers.join(','),
+      ...esimResults.map(result => [
+        result.eid,
+        result.tmo_status || '',
+        result.tmo_iccid || '',
+        result.tmo_timestamp || '',
+        result.verizon_status || '',
+        result.verizon_iccid || '',
+        result.verizon_timestamp || '',
+        result.global_status || '',
+        result.global_iccid || '',
+        result.global_timestamp || '',
+        result.att_status || '',
+        result.att_iccid || '',
+        result.att_timestamp || '',
+        result.processing_duration_seconds || '',
+        result.error_message || '',
+        new Date(result.created_at).toISOString()
+      ].map(field => `"${field}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `batch_${batch?.label || id}_results.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast({
+      title: "CSV Exported",
+      description: "The batch results have been exported successfully.",
+    });
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -292,25 +369,29 @@ const BatchDetails = () => {
               </div>
             </div>
             <div className="flex items-center space-x-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={isRunning ? handlePauseBatch : handleStartBatch}
-                disabled={startBatchMutation.isPending || pauseBatchMutation.isPending}
-              >
-                {isRunning ? (
-                  <>
-                    <Pause className="h-4 w-4 mr-2" />
-                    Pause
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    Start
-                  </>
-                )}
-              </Button>
-              <Button variant="outline" size="sm">
+              {!isRunning && !isProcessingStopped && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStartBatch}
+                  disabled={startBatchMutation.isPending}
+                >
+                  <Play className="h-4 w-4 mr-2" />
+                  Start
+                </Button>
+              )}
+              {isRunning && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStopBatch}
+                  disabled={stopBatchMutation.isPending}
+                >
+                  <Square className="h-4 w-4 mr-2" />
+                  Stop
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={handleExportCSV}>
                 <Download className="h-4 w-4 mr-2" />
                 Export CSV
               </Button>
@@ -328,7 +409,7 @@ const BatchDetails = () => {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Status</p>
                   <div className="flex items-center space-x-2 mt-1">
-                    <div className={`w-3 h-3 rounded-full ${batch.status === 'RUNNING' ? 'bg-blue-500 animate-pulse' : 'bg-gray-500'}`}></div>
+                    <div className={`w-3 h-3 rounded-full ${batch.status === 'RUNNING' ? 'bg-blue-500 animate-pulse' : batch.status === 'STOPPED' ? 'bg-red-500' : 'bg-gray-500'}`}></div>
                     <span className="text-xl font-bold">{batch.status}</span>
                   </div>
                 </div>
@@ -450,7 +531,7 @@ const BatchDetails = () => {
               <CardHeader>
                 <CardTitle>Live Processing Logs</CardTitle>
                 <CardDescription>
-                  Real-time output from worker processes
+                  {isProcessingStopped ? 'Processing stopped - logs are paused' : 'Real-time output from worker processes'}
                 </CardDescription>
               </CardHeader>
               <CardContent>

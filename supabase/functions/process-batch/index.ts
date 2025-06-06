@@ -18,9 +18,27 @@ interface ProcessBatchRequest {
   };
 }
 
+// Global flag to track if processing should continue
+let shouldContinueProcessing = true;
+
 // Generate a UUID and remove hyphens, return first 32 characters
 function generateRequestId(): string {
   return crypto.randomUUID().replace(/-/g, '').substring(0, 32);
+}
+
+async function checkBatchStatus(supabase: any, batchId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('batches')
+    .select('status')
+    .eq('id', batchId)
+    .single();
+  
+  if (error) {
+    console.error('Error checking batch status:', error);
+    return false;
+  }
+  
+  return data?.status === 'RUNNING';
 }
 
 async function makeApiRequest(url: string, options: RequestInit, apiKey: string, apiSecret: string) {
@@ -169,6 +187,12 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
   await logToBatch(supabase, batchId, 'INFO', `Starting processing for EID: ${eid}`, eid);
   
   try {
+    // Check if we should continue processing before each major step
+    if (!(await checkBatchStatus(supabase, batchId))) {
+      await logToBatch(supabase, batchId, 'INFO', `Processing stopped for EID: ${eid}`, eid);
+      return;
+    }
+
     // Step 1: Activate eSIM
     await logToBatch(supabase, batchId, 'INFO', `Initiating activation for ${eid}`, eid);
     const activationRequestId = await activateEsim(eid, apiKey, apiSecret);
@@ -183,6 +207,12 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
 
     // Wait and poll for activation result
     await sleep(30000); // 30 seconds
+    
+    if (!(await checkBatchStatus(supabase, batchId))) {
+      await logToBatch(supabase, batchId, 'INFO', `Processing stopped for EID: ${eid}`, eid);
+      return;
+    }
+
     let activationResult = null;
     const maxWaitTime = 300000; // 5 minutes
     const pollInterval = 10000; // 10 seconds
@@ -190,6 +220,11 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
 
     await logToBatch(supabase, batchId, 'INFO', `Waiting for activation result...`, eid);
     while (elapsed < maxWaitTime) {
+      if (!(await checkBatchStatus(supabase, batchId))) {
+        await logToBatch(supabase, batchId, 'INFO', `Processing stopped for EID: ${eid}`, eid);
+        return;
+      }
+      
       activationResult = await getOperationResult(activationRequestId, apiKey, apiSecret);
       if (activationResult) break;
       await sleep(pollInterval);
@@ -209,6 +244,11 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     const maxRetries = 8;
     
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (!(await checkBatchStatus(supabase, batchId))) {
+        await logToBatch(supabase, batchId, 'INFO', `Processing stopped for EID: ${eid}`, eid);
+        return;
+      }
+      
       const infoRequestId = generateRequestId();
       await getEsimInfo(eid, infoRequestId, apiKey, apiSecret);
       await sleep(30000);
@@ -242,6 +282,11 @@ async function processEsim(eid: string, planUuids: any, apiKey: string, apiSecre
     ];
 
     for (const plan of plans) {
+      if (!(await checkBatchStatus(supabase, batchId))) {
+        await logToBatch(supabase, batchId, 'INFO', `Processing stopped for EID: ${eid}`, eid);
+        return;
+      }
+      
       console.log(`Assigning ${plan.name} plan to ${eid}`);
       await logToBatch(supabase, batchId, 'INFO', `Assigning ${plan.name} plan to ${eid}`, eid);
       
@@ -457,18 +502,28 @@ Deno.serve(async (req) => {
     // Use background task to handle processing
     EdgeRuntime.waitUntil(
       Promise.all(processingPromises).then(async () => {
-        // Update batch status to COMPLETED
-        await supabaseClient
+        // Check final status
+        const { data: finalBatch } = await supabaseClient
           .from('batches')
-          .update({ 
-            status: 'COMPLETED', 
-            completed_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', batchId);
+          .select('status')
+          .eq('id', batchId)
+          .single();
         
-        await logToBatch(supabaseClient, batchId, 'INFO', `Batch ${batchId} processing completed successfully`);
-        console.log(`Batch ${batchId} processing completed`);
+        if (finalBatch?.status === 'RUNNING') {
+          // Only mark as completed if still running (not stopped by user)
+          await supabaseClient
+            .from('batches')
+            .update({ 
+              status: 'COMPLETED', 
+              completed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', batchId);
+          
+          await logToBatch(supabaseClient, batchId, 'INFO', `Batch ${batchId} processing completed successfully`);
+        }
+        
+        console.log(`Batch ${batchId} processing finished`);
       }).catch(async (error) => {
         console.error(`Batch ${batchId} processing failed:`, error);
         await logToBatch(supabaseClient, batchId, 'ERROR', `Batch processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
