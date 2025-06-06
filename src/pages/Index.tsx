@@ -22,12 +22,13 @@ const Dashboard = () => {
           setRecentBatches(data as any[]);
         }
       });
+
   }, []);
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'RUNNING': return 'bg-blue-500';
-      case 'DONE': return 'bg-green-500';
+      case 'COMPLETED': return 'bg-green-500';
       case 'FAILED': return 'bg-red-500';
       case 'PENDING': return 'bg-yellow-500';
       default: return 'bg-gray-500';
@@ -37,7 +38,7 @@ const Dashboard = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'RUNNING': return <Activity className="h-4 w-4" />;
-      case 'DONE': return <CheckCircle className="h-4 w-4" />;
+      case 'COMPLETED': return <CheckCircle className="h-4 w-4" />;
       case 'FAILED': return <AlertCircle className="h-4 w-4" />;
       default: return <Clock className="h-4 w-4" />;
     }
@@ -85,7 +86,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Active Batches</p>
-                  <p className="text-3xl font-bold text-blue-600">3</p>
+                  <p className="text-3xl font-bold text-blue-600">{stats?.activeBatches || 0}</p>
                 </div>
                 <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
                   <Activity className="h-6 w-6 text-blue-600" />
@@ -99,7 +100,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Success Rate</p>
-                  <p className="text-3xl font-bold text-green-600">94.8%</p>
+                  <p className="text-3xl font-bold text-green-600">{stats?.successRate || '0%'}</p>
                 </div>
                 <div className="w-12 h-12 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
                   <CheckCircle className="h-6 w-6 text-green-600" />
@@ -113,7 +114,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Avg Processing</p>
-                  <p className="text-3xl font-bold text-purple-600">2.4s</p>
+                  <p className="text-3xl font-bold text-purple-600">{stats?.avgProcessing || '0s'}</p>
                 </div>
                 <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
                   <Clock className="h-6 w-6 text-purple-600" />
@@ -127,7 +128,7 @@ const Dashboard = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Total Processed</p>
-                  <p className="text-3xl font-bold text-orange-600">12.4k</p>
+                  <p className="text-3xl font-bold text-orange-600">{stats?.totalProcessed || '0'}</p>
                 </div>
                 <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/20 rounded-lg flex items-center justify-center">
                   <BarChart3 className="h-6 w-6 text-orange-600" />
@@ -158,45 +159,53 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {recentBatches.map((batch) => (
-                    <div key={batch.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-3 h-3 rounded-full ${getStatusColor(batch.status)}`}></div>
-                          <h4 className="font-semibold">{batch.label}</h4>
-                          <Badge variant="outline" className="text-xs">
-                            {getStatusIcon(batch.status)}
-                            <span className="ml-1">{batch.status}</span>
-                          </Badge>
+                {isLoading ? (
+                  <div className="text-center py-8">Loading batches...</div>
+                ) : recentBatches.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground">No batches found. Create your first batch to get started.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {recentBatches.map((batch) => (
+                      <div key={batch.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-3 h-3 rounded-full ${getStatusColor(batch.status)}`}></div>
+                            <h4 className="font-semibold">{batch.label}</h4>
+                            <Badge variant="outline" className="text-xs">
+                              {getStatusIcon(batch.status)}
+                              <span className="ml-1">{batch.status}</span>
+                            </Badge>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm text-muted-foreground">
+                              {new Date(batch.created_at).toLocaleTimeString()}
+                            </span>
+                            <Link to={`/batch/${batch.id}`}>
+                              <Button size="sm" variant="outline">
+                                <Play className="h-3 w-3 mr-1" />
+                                View
+                              </Button>
+                            </Link>
+                          </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm text-muted-foreground">
-                            {new Date(batch.created).toLocaleTimeString()}
-                          </span>
-                          <Link to={`/batch/${batch.id}`}>
-                            <Button size="sm" variant="outline">
-                              <Play className="h-3 w-3 mr-1" />
-                              View
-                            </Button>
-                          </Link>
+                        
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span>Progress: {batch.completed}/{batch.total}</span>
+                            <span>{batch.progress}%</span>
+                          </div>
+                          <Progress value={batch.progress} className="h-2" />
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>✅ {batch.success_count} completed</span>
+                            <span>❌ {batch.failed} failed</span>
+                          </div>
                         </div>
                       </div>
-                      
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>Progress: {batch.completed}/{batch.total}</span>
-                          <span>{batch.progress}%</span>
-                        </div>
-                        <Progress value={batch.progress} className="h-2" />
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>✅ {batch.completed} completed</span>
-                          <span>❌ {batch.failed} failed</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -210,13 +219,7 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-center py-12">
-                  <BarChart3 className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">Analytics Dashboard</h3>
-                  <p className="text-muted-foreground">
-                    Detailed charts and metrics will be displayed here
-                  </p>
-                </div>
+                <Analytics />
               </CardContent>
             </Card>
           </TabsContent>

@@ -4,7 +4,7 @@ import time
 import datetime
 import sys
 import os
-import pandas as pd
+from supabase import create_client, Client
 
 # Teal API credentials should be provided via environment variables so they can
 # be set dynamically without modifying the code.
@@ -16,12 +16,68 @@ if not API_KEY or not API_SECRET:
         "TEAL_API_KEY and TEAL_API_SECRET environment variables must be set"
     )
 
+
 BASE_URL = 'https://integrationapi.teal.global/api/v1'
 HEADERS = {
     'ApiKey': API_KEY,
     'ApiSecret': API_SECRET,
     'Content-Type': 'application/json'
 }
+
+
+def results_to_db_row(results: dict) -> dict:
+    """Map the results dictionary to DB column names."""
+    return {
+        'eid': results.get('EID'),
+        'activation_request_id': results.get('Activation Request ID'),
+        'error_message': results.get('Error'),
+        'tmo_iccid': results.get('TMO ICCID'),
+        'tmo_status': results.get('TMO Status'),
+        'tmo_timestamp': results.get('TMO Timestamp'),
+        'tmo_plan_request_id': results.get('TMO Plan Request ID'),
+        'verizon_iccid': results.get('Verizon ICCID'),
+        'verizon_status': results.get('Verizon Status'),
+        'verizon_timestamp': results.get('Verizon Timestamp'),
+        'verizon_plan_request_id': results.get('Verizon Plan Request ID'),
+        'global_iccid': results.get('Global ICCID'),
+        'global_status': results.get('Global Status'),
+        'global_timestamp': results.get('Global Timestamp'),
+        'global_plan_request_id': results.get('Global Plan Request ID'),
+        'att_iccid': results.get('ATT ICCID'),
+        'att_status': results.get('ATT Status'),
+        'att_timestamp': results.get('ATT Timestamp'),
+        'att_plan_request_id': results.get('ATT Plan Request ID'),
+    }
+
+
+def insert_esim_result(results: dict) -> None:
+    """Insert a row into the esim_results table tagged with the current BATCH_ID."""
+    if not BATCH_ID:
+        return
+    row = results_to_db_row(results)
+    row['batch_id'] = BATCH_ID
+    try:
+        supabase.table('esim_results').upsert(row).execute()
+    except Exception as exc:
+        print(f"Failed to insert esim_results: {exc}")
+
+
+def insert_batch_log(level: str, message: str, eid: str | None = None) -> None:
+    """Insert a log row into batch_logs for the current batch."""
+    if not BATCH_ID:
+        return
+    log_row = {
+        'batch_id': BATCH_ID,
+        'level': level,
+        'message': message,
+        'timestamp': datetime.datetime.utcnow().isoformat()
+    }
+    if eid:
+        log_row['eid'] = eid
+    try:
+        supabase.table('batch_logs').insert(log_row).execute()
+    except Exception as exc:
+        print(f"Failed to insert batch log: {exc}")
 
 # Callback URL
 CALLBACK_URL = 'https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod'
@@ -31,19 +87,44 @@ def already_active(eid: str, plan_uuid: str) -> bool:
     True  ➜  SIM already has this plan *active* – we can skip.
     False ➜  Plan missing or inactive – we still need to run assign-plan.
     """
-    rid = generate_request_id()
-    info_op = get_esim_info(eid, rid)
-    # we need the finished operation-result
-    time.sleep(30)
-    info = get_operation_result(rid)
-    if not info or not info.get("entries"):
-        return False                       # can’t prove it’s active – don’t skip
+    try:
+        info_op, rid = get_esim_info(eid)
 
-    cp_entries = info["entries"][0].get("connectionProfileEntries", [])
-    return any(
-        cp.get("planUuid") == plan_uuid and cp.get("active") is True
-        for cp in cp_entries
-    )
+        time.sleep(30)
+
+        info = get_operation_result(rid)
+        if not info or not info.get("entries"):
+            return False                       # can't prove it's active – don't skip
+
+        cp_entries = info["entries"][0].get("connectionProfileEntries", [])
+        return any(
+            cp.get("planUuid") == plan_uuid and cp.get("active") is True
+            for cp in cp_entries
+        )
+
+    except Exception as e:
+        print(f"Could not check if plan is already active: {e}")
+        print("Assuming plan is not active and proceeding with assignment...")
+        return False  # If we can't check, assume it's not active
+
+# verify if the fallback profile is set to true or false
+def verify_fallback_profile(eid, plan_uuid, plan_name):
+    print("Fetching eSIM info to confirm profile fallback lock...")
+    info_json_fallback, info_req_id = get_esim_info(eid)
+    print("Waiting 60 seconds")
+    time.sleep(60)
+    info_result = get_operation_result(info_req_id)
+    if not info_result or not info_result.get("entries"):
+        print("Could not retrieve eSIM info for verification.")
+    else:
+        entry = info_result["entries"][0]
+        profiles = entry.get("connectionProfileEntries", [])
+        print("Full connectionProfileEntries:")
+        print(profiles)
+        for cp in profiles:
+            if cp.get("planUuid") == plan_uuid:
+                print(f"---> Plan '{plan_name}' fallbackProfile =", cp.get("fallbackProfile"))
+                break
 
 def generate_request_id():
     # Generate a UUID and remove hyphens
@@ -87,30 +168,55 @@ def get_operation_result(request_id):
         raise Exception(f"Operation result API call failed with status code {response.status_code}")
     return response.json()
 
-def get_esim_info(eid, request_id):
-    url = f'{BASE_URL}/esims/info'
-    params = {
-        'callbackUrl': CALLBACK_URL,
-        'limit': 1,
-        'requestId': request_id,
-        'eid': eid
-    }
-    # API call
-    response = requests.get(url, headers=HEADERS, params=params)
-    if response.status_code != 200:
-        raise Exception(f"eSIM info API call failed with status code {response.status_code}")
-    result = response.json()
-    if not result.get('success'):
-        raise Exception("eSIM info request failed: success != true")
-    return result
+def get_esim_info(eid: str, max_retries: int = 5, delay: int = 30):
+    """
+    Fetches eSIM info, retrying up to `max_retries` times.
+    Returns (response_json, request_id) so the caller
+    knows which requestId to poll in /operation-result.
+    """
+    last_err = None
 
-def assign_plan(eid, plan_uuid):
+    for attempt in range(1, max_retries + 1):
+        request_id = generate_request_id()          # NEW id each try
+        params = {
+            "callbackUrl": CALLBACK_URL,
+            "limit": 1,
+            "requestId": request_id,
+            "eid": eid,
+        }
+
+        try:
+            resp = requests.get(f"{BASE_URL}/esims/info",
+                                 headers=HEADERS, params=params, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    return data, request_id         # ← caller uses this ID
+                last_err = "success != true"
+            else:
+                last_err = f"HTTP {resp.status_code}"
+        except requests.RequestException as exc:
+            last_err = str(exc)
+
+        # back-off before next attempt
+        if attempt < max_retries:
+            time.sleep(delay)
+
+    # all retries exhausted
+    raise Exception(f"eSIM info request failed after {max_retries} attempts – {last_err}")
+
+def assign_plan(eid, plan_uuid, profile_lock):
     request_id = generate_request_id()
     url = f'{BASE_URL}/esims/assign-plan'
     params = {
         'requestId': request_id,
         'callbackUrl': CALLBACK_URL
     }
+
+    # enable the profile fallback lock if parameter is "true"
+    if profile_lock == "true":
+        params["lockProfile"] = "true"
+
     payload = {
         "entries": [
             {
@@ -119,6 +225,7 @@ def assign_plan(eid, plan_uuid):
             }
         ]
     }
+
     response = requests.post(url, headers=HEADERS, params=params, json=payload)
     if response.status_code != 200:
         raise Exception(f"Assign Plan API call failed with status code {response.status_code}")
@@ -131,13 +238,13 @@ def check_device_status(eid):
     print()
     print("Requesting eSIM info to check device status...")
 
-    request_id_query_status = generate_request_id()
-    esim_info_request_result = get_esim_info(eid, request_id_query_status)
+    #request_id_query_status = generate_request_id()
+    info_json, info_request_id = get_esim_info(eid)
 
     print("Waiting for 30 seconds...")
     time.sleep(30)
 
-    esim_info_result = get_operation_result(request_id_query_status)
+    esim_info_result = get_operation_result(info_request_id)
     if not esim_info_result:
         raise Exception("Failed to retrieve eSIM info operation result.")
 
@@ -157,11 +264,14 @@ def check_device_status(eid):
 
             time.sleep(120)
 
-            request_id_loop_status = generate_request_id()
-            esim_info_request_result = get_esim_info(eid, request_id_loop_status)
+            #request_id_loop_status = generate_request_id()
+            info_json, info_request_id = get_esim_info(eid)
+
             print("Waiting for 30 seconds...")
             time.sleep(30)
-            esim_info_result = get_operation_result(request_id_loop_status)
+
+            esim_info_result = get_operation_result(info_request_id)
+
             if not esim_info_result:
                 raise Exception("Failed to retrieve eSIM info operation result.")
             entries = esim_info_result.get('entries', [])
@@ -238,11 +348,8 @@ def main():
             print("Activation failed or timed out.")
             # Record failure in the output
             results['Error'] = "Activation failed or timed out."
-            # Write to CSV and exit
-            output_file = 'teal_output_US.csv'
-            file_exists = os.path.isfile(output_file)
-            df = pd.DataFrame([results])
-            df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+            insert_esim_result(results)
+            insert_batch_log('ERROR', 'Activation failed or timed out.', eid)
             sys.exit(1)
             # --------------------------------------------------------------------------
             # --------------------------------------------------------------------------
@@ -251,13 +358,14 @@ def main():
 
         # Check if eSIM is active
         print("Requesting eSIM info to check if eSIM is active...")
-        request_id_query = generate_request_id()
-        esim_info_request_result = get_esim_info(eid, request_id_query)
+
+        #request_id_query = generate_request_id()
+        info_json, info_request_id = get_esim_info(eid)
 
         print("Waiting for 30 seconds...")
         time.sleep(30)
 
-        esim_info_result = get_operation_result(request_id_query)
+        esim_info_result = get_operation_result(info_request_id)
 
         if not esim_info_result:
             raise Exception("Failed to retrieve eSIM info operation result.")
@@ -273,19 +381,20 @@ def main():
         if not esim_entry.get('active'):
             print()
             print("eSIM is not active, starting loop to check activation status...")
-            max_retries = 8
+            max_retries = 16
             for attempt in range(max_retries):
                 print(f"Attempt {attempt+1} of {max_retries}")
                 print("Waiting for 2 minutes...")
 
                 time.sleep(120)
 
-                request_id_loop = generate_request_id()
-                esim_info_request_result = get_esim_info(eid, request_id_loop)
+                # request_id_loop = generate_request_id()
+                info_json_loop, info_request_id_loop = get_esim_info(eid)
+
                 print("Waiting for 30 seconds...")
                 time.sleep(30)
 
-                esim_info_result = get_operation_result(request_id_loop)
+                esim_info_result = get_operation_result(info_request_id_loop)
 
                 if not esim_info_result:
                     raise Exception("Failed to retrieve eSIM info operation result.")
@@ -317,13 +426,22 @@ def main():
             plan_name = plan['name']
             plan_uuid = plan['uuid']
 
-            # --- NEW : skip if this profile is already active -------------
+            if plan_name == "ATT":
+                profile_lock = "true"
+            else:
+                profile_lock = "false"
+
+            # --- NEW : skip if the profile is already active from a previous script execution-------------
+            # ---- to make use of this section just uncomment the function on top and the below section
             if already_active(eid, plan_uuid):
-                print(f"{eid}: plan '{plan_name}' already SUCCESS – skipping")
+                print(f"{eid}: plan '{plan_name}' already installed - skipping")
                 results[f"{plan_name} ICCID"] = "Already active"
                 results[f"{plan_name} Status"] = "SUCCESS"
                 results[f"{plan_name} Timestamp"] = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
                 continue  # jump to next plan
+            else:
+                print(f"{eid}: plan '{plan_name}' not installed - proceeding with assignment")
+            # ---------------------------------------------------------------
             # ---------------------------------------------------------------
 
             # Check that the device is ONLINE before each plan assignment
@@ -337,7 +455,7 @@ def main():
                 print(f"Plan assignment attempt {plan_attempt} for plan '{plan_name}'")
 
                 # Initiate plan assignment
-                assign_plan_request_id = assign_plan(eid, plan_uuid)
+                assign_plan_request_id = assign_plan(eid, plan_uuid, profile_lock)
                 results[f"{plan_name} Plan Request ID"] = assign_plan_request_id
                 print(f"Plan assignment initiated with request ID: {assign_plan_request_id}")
 
@@ -355,8 +473,8 @@ def main():
 
                 # Check planChangeStatus
                 print(f"Checking planChangeStatus for '{plan_name}'...")
-                request_id_plan_check = generate_request_id()
-                esim_info_request_result = get_esim_info(eid, request_id_plan_check)
+                #request_id_plan_check = generate_request_id()
+                esim_info_request_result, request_id_plan_check = get_esim_info(eid)
 
                 print("Waiting for 30 seconds before retrieving plan change status...")
                 time.sleep(30)
@@ -374,6 +492,7 @@ def main():
                 if plan_change_status == "SUCCESS":
                     print("Plan change status is SUCCESS.")
                     plan_assignment_successful = True
+                    verify_fallback_profile(eid, plan_uuid, plan_name)
                     break
 
                 # If it's FAILURE, then this attempt failed.
@@ -385,10 +504,8 @@ def main():
                         results[f"{plan_name} ICCID"] = 'N/A'
                         results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
                         results[f"{plan_name} Timestamp"] = 'N/A'
-                        output_file = 'teal_output_US.csv'
-                        file_exists = os.path.isfile(output_file)
-                        df = pd.DataFrame([results])
-                        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+                        insert_esim_result(results)
+                        insert_batch_log('ERROR', f"Plan change FAILURE for {plan_name}", eid)
                         sys.exit(1)
                     else:
                         print("Retrying plan assignment due to FAILURE status...")
@@ -407,8 +524,8 @@ def main():
 
                         time.sleep(120)
 
-                        request_id_nested = generate_request_id()
-                        esim_info_request_result = get_esim_info(eid, request_id_nested)
+                        #request_id_nested = generate_request_id()
+                        esim_info_request_result, request_id_nested = get_esim_info(eid)
                         print("Waiting for 30 seconds before nested status check...")
                         time.sleep(30)
                         esim_info_result = get_operation_result(request_id_nested)
@@ -426,6 +543,7 @@ def main():
                             print("Plan change status is SUCCESS in nested check.")
                             nested_success = True
                             plan_assignment_successful = True
+                            verify_fallback_profile(eid, plan_uuid, plan_name)
                             break
                         elif plan_change_status == "FAILURE":
                             print("Plan change status returned FAILURE during nested check.")
@@ -435,8 +553,11 @@ def main():
                     if nested_success:
                         break  # Break out of the outer loop since assignment succeeded
                     else:
-                        print("Nested check did not achieve SUCCESS; retrying plan assignment...")
-                        continue  # Retry the outer loop
+                        if plan_attempt < max_plan_attempts:
+                            print("Nested check did not achieve SUCCESS; retrying plan assignment...")
+                        else:
+                            print("Nested check did not achieve SUCCESS; no more retries remaining.")
+                        continue  # Retry the outer loop (or exit if no more attempts)
 
             # If after all outer attempts the assignment is still not successful, exit with an error.
             if not plan_assignment_successful:
@@ -444,10 +565,8 @@ def main():
                 results[f"{plan_name} ICCID"] = 'N/A'
                 results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
                 results[f"{plan_name} Timestamp"] = 'N/A'
-                output_file = 'teal_output_US.csv'
-                file_exists = os.path.isfile(output_file)
-                df = pd.DataFrame([results])
-                df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+                insert_esim_result(results)
+                insert_batch_log('ERROR', f"Plan change failed for {plan_name}", eid)
                 sys.exit(1)
 
             # Upon a successful assignment, store the resulting data.
@@ -470,20 +589,8 @@ def main():
         print()
         print("All plans assigned successfully.")
 
-        # Prepare DataFrame with data in a single row
-        df = pd.DataFrame([results])
-
-        pd.set_option('display.max_columns', None)  # Display all columns
-
-        print(df.to_string(index=False))
-
-        output_file = 'teal_output_US.csv'
-
-        # Check if the file exists to decide if headers are needed
-        file_exists = os.path.isfile(output_file)
-
-        # Write or append to the CSV file
-        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+        insert_esim_result(results)
+        insert_batch_log('INFO', 'All plans assigned successfully', eid)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -491,11 +598,8 @@ def main():
         # Record the error in results
         results['Error'] = str(e)
 
-        # Write to CSV
-        output_file = 'teal_output_US.csv'
-        file_exists = os.path.isfile(output_file)
-        df = pd.DataFrame([results])
-        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+        insert_esim_result(results)
+        insert_batch_log('ERROR', str(e), eid)
         sys.exit(1)
 
 if __name__ == '__main__':

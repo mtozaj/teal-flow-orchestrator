@@ -1,30 +1,56 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { ArrowLeft, Key, Shield, Zap, Globe } from 'lucide-react';
+import { ArrowLeft, Settings as SettingsIcon, Database, Save } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 
 const Settings = () => {
-  const [apiKey, setApiKey] = useState('');
-  const [apiSecret, setApiSecret] = useState('');
-  const [callbackUrl, setCallbackUrl] = useState('https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod');
-  const [maxWorkers, setMaxWorkers] = useState('16');
-  const [rateLimit, setRateLimit] = useState('4');
-  const [autoRetry, setAutoRetry] = useState(true);
-  const [skipSuccess, setSkipSuccess] = useState(true);
+  const [apiSettings, setApiSettings] = useState({
+    tealApiKey: '',
+    tealApiSecret: '',
+    tmoUuid: 'cda438862b284bcdaec82ee516eada14',
+    verizonUuid: '3c8fbbbc3ab442b8bc2f244c5180f9d1',
+    globalUuid: '493bdfc2eccb415ea63796187f830784',
+    attUuid: 'cd27b630772d4d8f915173488b7bfcf1'
+  });
+
   const { toast } = useToast();
 
-  const handleSave = () => {
+  // Load saved settings from localStorage when component mounts
+  useEffect(() => {
+    const savedTealApiKey = localStorage.getItem('tealApiKey') || '';
+    const savedTealApiSecret = localStorage.getItem('tealApiSecret') || '';
+    const savedTmoUuid = localStorage.getItem('tmoUuid') || 'cda438862b284bcdaec82ee516eada14';
+    const savedVerizonUuid = localStorage.getItem('verizonUuid') || '3c8fbbbc3ab442b8bc2f244c5180f9d1';
+    const savedGlobalUuid = localStorage.getItem('globalUuid') || '493bdfc2eccb415ea63796187f830784';
+    const savedAttUuid = localStorage.getItem('attUuid') || 'cd27b630772d4d8f915173488b7bfcf1';
+
+    setApiSettings({
+      tealApiKey: savedTealApiKey,
+      tealApiSecret: savedTealApiSecret,
+      tmoUuid: savedTmoUuid,
+      verizonUuid: savedVerizonUuid,
+      globalUuid: savedGlobalUuid,
+      attUuid: savedAttUuid
+    });
+  }, []);
+
+  const handleSaveApiSettings = () => {
+    // Save API settings to localStorage
+    localStorage.setItem('tealApiKey', apiSettings.tealApiKey);
+    localStorage.setItem('tealApiSecret', apiSettings.tealApiSecret);
+    localStorage.setItem('tmoUuid', apiSettings.tmoUuid);
+    localStorage.setItem('verizonUuid', apiSettings.verizonUuid);
+    localStorage.setItem('globalUuid', apiSettings.globalUuid);
+    localStorage.setItem('attUuid', apiSettings.attUuid);
+    
     toast({
-      title: "Settings saved",
-      description: "Your configuration has been updated successfully.",
+      title: "API settings saved",
+      description: "Your API configuration has been updated successfully",
     });
   };
 
@@ -40,216 +66,102 @@ const Settings = () => {
                 Back
               </Button>
             </Link>
-            <h1 className="text-2xl font-bold">Settings</h1>
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
+                <SettingsIcon className="h-5 w-5 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold">Settings</h1>
+            </div>
           </div>
         </div>
       </header>
 
       <div className="container mx-auto px-6 py-8 max-w-4xl">
-        <div className="space-y-6">
-          {/* Teal API Configuration */}
-          <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                  <Key className="h-5 w-5 text-white" />
-                </div>
-                <span>Teal API Configuration</span>
-              </CardTitle>
-              <CardDescription>
-                Configure your Teal API credentials and endpoints
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+        <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
+          <CardHeader>
+            <CardTitle className="flex items-center space-x-2">
+              <Database className="h-5 w-5" />
+              <span>API Configuration</span>
+            </CardTitle>
+            <CardDescription>
+              Configure API credentials and carrier-specific UUIDs
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="api-key">API Key</Label>
+                  <Label htmlFor="teal-api-key">Teal API Key</Label>
                   <Input
-                    id="api-key"
+                    id="teal-api-key"
                     type="password"
-                    placeholder="Enter your Teal API key"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    value={apiSettings.tealApiKey}
+                    onChange={(e) => setApiSettings(prev => ({ ...prev, tealApiKey: e.target.value }))}
+                    placeholder="Enter Teal API Key"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="api-secret">API Secret</Label>
+                  <Label htmlFor="teal-api-secret">Teal API Secret</Label>
                   <Input
-                    id="api-secret"
+                    id="teal-api-secret"
                     type="password"
-                    placeholder="Enter your Teal API secret"
-                    value={apiSecret}
-                    onChange={(e) => setApiSecret(e.target.value)}
+                    value={apiSettings.tealApiSecret}
+                    onChange={(e) => setApiSettings(prev => ({ ...prev, tealApiSecret: e.target.value }))}
+                    placeholder="Enter Teal API Secret"
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="callback-url">Callback URL</Label>
-                <Input
-                  id="callback-url"
-                  placeholder="AWS SQS callback URL"
-                  value={callbackUrl}
-                  onChange={(e) => setCallbackUrl(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  AWS SQS URL for receiving Teal API callbacks
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Performance Settings */}
-          <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-green-600 to-blue-600 rounded-lg flex items-center justify-center">
-                  <Zap className="h-5 w-5 text-white" />
-                </div>
-                <span>Performance Settings</span>
-              </CardTitle>
-              <CardDescription>
-                Configure processing limits and rate limiting
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="max-workers">Max Parallel Workers</Label>
-                  <Select value={maxWorkers} onValueChange={setMaxWorkers}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 worker</SelectItem>
-                      <SelectItem value="4">4 workers</SelectItem>
-                      <SelectItem value="8">8 workers</SelectItem>
-                      <SelectItem value="16">16 workers</SelectItem>
-                      <SelectItem value="32">32 workers</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="rate-limit">Rate Limit (req/sec)</Label>
-                  <Select value={rateLimit} onValueChange={setRateLimit}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 req/sec</SelectItem>
-                      <SelectItem value="2">2 req/sec</SelectItem>
-                      <SelectItem value="4">4 req/sec</SelectItem>
-                      <SelectItem value="8">8 req/sec</SelectItem>
-                      <SelectItem value="16">16 req/sec</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Processing Options */}
-          <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg flex items-center justify-center">
-                  <Shield className="h-5 w-5 text-white" />
-                </div>
-                <span>Processing Options</span>
-              </CardTitle>
-              <CardDescription>
-                Configure automatic retry and optimization settings
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label htmlFor="auto-retry">Automatic Retry</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Automatically retry failed operations after batch completion
-                  </p>
-                </div>
-                <Switch
-                  id="auto-retry"
-                  checked={autoRetry}
-                  onCheckedChange={setAutoRetry}
-                />
               </div>
               
-              <Separator />
-              
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label htmlFor="skip-success">Skip Already Active Plans</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Skip EIDs that already have active plans to avoid duplicates
-                  </p>
-                </div>
-                <Switch
-                  id="skip-success"
-                  checked={skipSuccess}
-                  onCheckedChange={setSkipSuccess}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Default Plans */}
-          <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-orange-600 to-red-600 rounded-lg flex items-center justify-center">
-                  <Globe className="h-5 w-5 text-white" />
-                </div>
-                <span>Default Plan Configuration</span>
-              </CardTitle>
-              <CardDescription>
-                Set default plan UUIDs for each carrier
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="tmo-plan">T-Mobile Plan UUID</Label>
-                  <Input
-                    id="tmo-plan"
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="vzn-plan">Verizon Plan UUID</Label>
-                  <Input
-                    id="vzn-plan"
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="att-plan">AT&T Plan UUID</Label>
-                  <Input
-                    id="att-plan"
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="global-plan">Global Plan UUID</Label>
-                  <Input
-                    id="global-plan"
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  />
+              <div className="border-t pt-4">
+                <h3 className="text-lg font-medium mb-4">Carrier Plan UUIDs</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="tmo-uuid">T-Mobile UUID</Label>
+                    <Input
+                      id="tmo-uuid"
+                      value={apiSettings.tmoUuid}
+                      onChange={(e) => setApiSettings(prev => ({ ...prev, tmoUuid: e.target.value }))}
+                      placeholder="T-Mobile plan UUID"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="verizon-uuid">Verizon UUID</Label>
+                    <Input
+                      id="verizon-uuid"
+                      value={apiSettings.verizonUuid}
+                      onChange={(e) => setApiSettings(prev => ({ ...prev, verizonUuid: e.target.value }))}
+                      placeholder="Verizon plan UUID"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="global-uuid">Global UUID</Label>
+                    <Input
+                      id="global-uuid"
+                      value={apiSettings.globalUuid}
+                      onChange={(e) => setApiSettings(prev => ({ ...prev, globalUuid: e.target.value }))}
+                      placeholder="Global plan UUID"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="att-uuid">AT&T UUID</Label>
+                    <Input
+                      id="att-uuid"
+                      value={apiSettings.attUuid}
+                      onChange={(e) => setApiSettings(prev => ({ ...prev, attUuid: e.target.value }))}
+                      placeholder="AT&T plan UUID"
+                    />
+                  </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Save Button */}
-          <div className="flex justify-end">
-            <Button 
-              onClick={handleSave}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-            >
-              Save Settings
-            </Button>
-          </div>
-        </div>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={handleSaveApiSettings} className="bg-gradient-to-r from-blue-600 to-purple-600">
+                <Save className="h-4 w-4 mr-2" />
+                Save API Settings
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

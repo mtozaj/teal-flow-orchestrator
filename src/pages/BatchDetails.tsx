@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -52,7 +51,6 @@ const BatchDetails = () => {
       supabase.removeChannel(channel);
     };
   }, [id]);
-
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -255,41 +253,28 @@ const BatchDetails = () => {
             </Card>
           </TabsContent>
 
-          <TabsContent value="logs">
+          <TabsContent value="logs" className="space-y-4">
             <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm dark:bg-slate-800/80">
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Terminal className="h-5 w-5" />
-                  <span>Live Processing Logs</span>
-                  <div className="flex items-center space-x-2 ml-auto">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="text-sm text-muted-foreground">Live</span>
-                  </div>
-                </CardTitle>
+                <CardTitle>Live Processing Logs</CardTitle>
                 <CardDescription>
-                  Real-time logs from all worker processes
+                  Real-time output from worker processes
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[500px] w-full border rounded-lg p-4 bg-slate-950 text-green-400 font-mono text-sm">
-                  <div className="space-y-1">
+                <ScrollArea className="h-[600px] rounded-md border p-4 bg-slate-950">
+                  <div className="space-y-1 font-mono text-sm">
                     {logs.map((log, index) => (
-                      <div key={index} className="flex items-start space-x-2">
-                        <span className="text-slate-400 text-xs">
-                          {new Date(log.timestamp).toLocaleTimeString()}
-                        </span>
-                        <span className={`text-xs font-semibold ${getLogLevelColor(log.level)}`}>
-                          [{log.level}]
-                        </span>
-                        <span className="text-yellow-400 text-xs">{log.eid}</span>
-                        <span className="text-green-400 text-xs">{log.message}</span>
+                      <div key={index} className="text-slate-300">
+                        <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                        {' '}
+                        <span className={getLogLevelColor(log.level)}>[{log.level}]</span>
+                        {' '}
+                        <span className="text-blue-400">[{log.eid}]</span>
+                        {' '}
+                        <span>{log.message}</span>
                       </div>
                     ))}
-                    {logs.length === 0 && (
-                      <div className="text-slate-400 text-center py-8">
-                        Waiting for logs...
-                      </div>
-                    )}
                   </div>
                 </ScrollArea>
               </CardContent>
