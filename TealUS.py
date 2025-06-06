@@ -25,10 +25,10 @@ def already_active(eid: str, plan_uuid: str) -> bool:
     False ➜  Plan missing or inactive – we still need to run assign-plan.
     """
     try:
-        # get_esim_info now generates its own request_id and returns it
         info_op, rid = get_esim_info(eid)
-        # we need the finished operation-result
+
         time.sleep(30)
+
         info = get_operation_result(rid)
         if not info or not info.get("entries"):
             return False                       # can't prove it's active – don't skip
@@ -43,6 +43,7 @@ def already_active(eid: str, plan_uuid: str) -> bool:
         print(f"Could not check if plan is already active: {e}")
         print("Assuming plan is not active and proceeding with assignment...")
         return False  # If we can't check, assume it's not active
+
 # verify if the fallback profile is set to true or false
 def verify_fallback_profile(eid, plan_uuid, plan_name):
     print("Fetching eSIM info to confirm profile fallback lock...")
@@ -140,8 +141,6 @@ def get_esim_info(eid: str, max_retries: int = 5, delay: int = 30):
 
     # all retries exhausted
     raise Exception(f"eSIM info request failed after {max_retries} attempts – {last_err}")
-
-
 
 def assign_plan(eid, plan_uuid, profile_lock):
     request_id = generate_request_id()
@@ -375,11 +374,14 @@ def main():
             # --- NEW : skip if the profile is already active from a previous script execution-------------
             # ---- to make use of this section just uncomment the function on top and the below section
             if already_active(eid, plan_uuid):
-                print(f"{eid}: plan '{plan_name}' already SUCCESS - skipping")
+                print(f"{eid}: plan '{plan_name}' already installed - skipping")
                 results[f"{plan_name} ICCID"] = "Already active"
                 results[f"{plan_name} Status"] = "SUCCESS"
                 results[f"{plan_name} Timestamp"] = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
                 continue  # jump to next plan
+            else:
+                print(f"{eid}: plan '{plan_name}' not installed - proceeding with assignment")
+            # ---------------------------------------------------------------
             # ---------------------------------------------------------------
 
             # Check that the device is ONLINE before each plan assignment
