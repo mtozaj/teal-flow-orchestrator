@@ -4,10 +4,16 @@ import time
 import datetime
 import sys
 import os
-import pandas as pd
+from supabase import create_client, Client
 
-API_KEY = "d78farxW274ITl1EwVaRYAhQcfhYSKIpttZBavjzA24YIm2vW7q49CIQ1Q9OGBPBfW17VeQBo9MKSCnOSgf6p1Eqg17U95D5DxCW"
-API_SECRET = "2uMopWtslrELG30loy11SxmFCBbSXNnwHB5yTT3zO3ybyQHoI9bu8OONzpOwdveexWaXzvOclcJnvLffHKlP8chzG5TGVpdaoHLD"
+API_KEY = os.environ.get("TEAL_API_KEY")
+API_SECRET = os.environ.get("TEAL_API_SECRET")
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+BATCH_ID = os.environ.get("BATCH_ID")
+
+supabase: Client = create_client(SUPABASE_URL or "", SUPABASE_SERVICE_ROLE_KEY or "")
 
 BASE_URL = 'https://integrationapi.teal.global/api/v1'
 HEADERS = {
@@ -15,6 +21,61 @@ HEADERS = {
     'ApiSecret': API_SECRET,
     'Content-Type': 'application/json'
 }
+
+
+def results_to_db_row(results: dict) -> dict:
+    """Map the results dictionary to DB column names."""
+    return {
+        'eid': results.get('EID'),
+        'activation_request_id': results.get('Activation Request ID'),
+        'error_message': results.get('Error'),
+        'tmo_iccid': results.get('TMO ICCID'),
+        'tmo_status': results.get('TMO Status'),
+        'tmo_timestamp': results.get('TMO Timestamp'),
+        'tmo_plan_request_id': results.get('TMO Plan Request ID'),
+        'verizon_iccid': results.get('Verizon ICCID'),
+        'verizon_status': results.get('Verizon Status'),
+        'verizon_timestamp': results.get('Verizon Timestamp'),
+        'verizon_plan_request_id': results.get('Verizon Plan Request ID'),
+        'global_iccid': results.get('Global ICCID'),
+        'global_status': results.get('Global Status'),
+        'global_timestamp': results.get('Global Timestamp'),
+        'global_plan_request_id': results.get('Global Plan Request ID'),
+        'att_iccid': results.get('ATT ICCID'),
+        'att_status': results.get('ATT Status'),
+        'att_timestamp': results.get('ATT Timestamp'),
+        'att_plan_request_id': results.get('ATT Plan Request ID'),
+    }
+
+
+def insert_esim_result(results: dict) -> None:
+    """Insert a row into the esim_results table tagged with the current BATCH_ID."""
+    if not BATCH_ID:
+        return
+    row = results_to_db_row(results)
+    row['batch_id'] = BATCH_ID
+    try:
+        supabase.table('esim_results').upsert(row).execute()
+    except Exception as exc:
+        print(f"Failed to insert esim_results: {exc}")
+
+
+def insert_batch_log(level: str, message: str, eid: str | None = None) -> None:
+    """Insert a log row into batch_logs for the current batch."""
+    if not BATCH_ID:
+        return
+    log_row = {
+        'batch_id': BATCH_ID,
+        'level': level,
+        'message': message,
+        'timestamp': datetime.datetime.utcnow().isoformat()
+    }
+    if eid:
+        log_row['eid'] = eid
+    try:
+        supabase.table('batch_logs').insert(log_row).execute()
+    except Exception as exc:
+        print(f"Failed to insert batch log: {exc}")
 
 # Callback URL
 CALLBACK_URL = 'https://sqs.us-east-2.amazonaws.com/404383143741/liveu-api-notification-queue-prod'
@@ -285,11 +346,8 @@ def main():
             print("Activation failed or timed out.")
             # Record failure in the output
             results['Error'] = "Activation failed or timed out."
-            # Write to CSV and exit
-            output_file = 'teal_output_US_Fallback.csv'
-            file_exists = os.path.isfile(output_file)
-            df = pd.DataFrame([results])
-            df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+            insert_esim_result(results)
+            insert_batch_log('ERROR', 'Activation failed or timed out.', eid)
             sys.exit(1)
             # --------------------------------------------------------------------------
             # --------------------------------------------------------------------------
@@ -444,10 +502,8 @@ def main():
                         results[f"{plan_name} ICCID"] = 'N/A'
                         results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
                         results[f"{plan_name} Timestamp"] = 'N/A'
-                        output_file = 'teal_output_US_Fallback.csv'
-                        file_exists = os.path.isfile(output_file)
-                        df = pd.DataFrame([results])
-                        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+                        insert_esim_result(results)
+                        insert_batch_log('ERROR', f"Plan change FAILURE for {plan_name}", eid)
                         sys.exit(1)
                     else:
                         print("Retrying plan assignment due to FAILURE status...")
@@ -507,10 +563,8 @@ def main():
                 results[f"{plan_name} ICCID"] = 'N/A'
                 results[f"{plan_name} Status"] = 'Plan change failed or timed out.'
                 results[f"{plan_name} Timestamp"] = 'N/A'
-                output_file = 'teal_output_US_Fallback.csv'
-                file_exists = os.path.isfile(output_file)
-                df = pd.DataFrame([results])
-                df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+                insert_esim_result(results)
+                insert_batch_log('ERROR', f"Plan change failed for {plan_name}", eid)
                 sys.exit(1)
 
             # Upon a successful assignment, store the resulting data.
@@ -533,20 +587,8 @@ def main():
         print()
         print("All plans assigned successfully.")
 
-        # Prepare DataFrame with data in a single row
-        df = pd.DataFrame([results])
-
-        pd.set_option('display.max_columns', None)  # Display all columns
-
-        print(df.to_string(index=False))
-
-        output_file = 'teal_output_US_Fallback.csv'
-
-        # Check if the file exists to decide if headers are needed
-        file_exists = os.path.isfile(output_file)
-
-        # Write or append to the CSV file
-        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+        insert_esim_result(results)
+        insert_batch_log('INFO', 'All plans assigned successfully', eid)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -554,11 +596,8 @@ def main():
         # Record the error in results
         results['Error'] = str(e)
 
-        # Write to CSV
-        output_file = 'teal_output_US_Fallback.csv'
-        file_exists = os.path.isfile(output_file)
-        df = pd.DataFrame([results])
-        df.to_csv(output_file, mode='a', index=False, header=not file_exists)
+        insert_esim_result(results)
+        insert_batch_log('ERROR', str(e), eid)
         sys.exit(1)
 
 if __name__ == '__main__':
