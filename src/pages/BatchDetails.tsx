@@ -203,17 +203,24 @@ const BatchDetails = () => {
     fetchInitialLogs();
 
     const fetchLatestLogs = async () => {
-      if (!lastTimestampRef.current) return;
-      const { data, error } = await supabase
+      let query = supabase
         .from('batch_logs')
         .select('*')
-        .eq('batch_id', id)
-        .gt('timestamp', lastTimestampRef.current)
-        .order('timestamp', { ascending: true });
+        .eq('batch_id', id);
+
+      if (lastTimestampRef.current) {
+        query = query.gt('timestamp', lastTimestampRef.current);
+      }
+
+      const { data, error } = await query.order('timestamp', { ascending: true });
 
       if (!error && data && data.length > 0) {
-        lastTimestampRef.current = data[data.length - 1].timestamp;
-        setLiveLogs(prev => [...prev, ...data]);
+        const newLastTimestamp = data[data.length - 1].timestamp;
+        lastTimestampRef.current = newLastTimestamp;
+
+        setLiveLogs(prev =>
+          prev.length > 0 ? [...prev, ...data] : data
+        );
       }
     };
 
